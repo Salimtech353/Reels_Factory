@@ -1,0 +1,34 @@
+name: Extract ZIP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract ZIP
+        run: |
+          unzip webapp-666.zip -d extracted
+
+      - name: Copy files safely
+        run: |
+          rsync -av \
+          --exclude='.git' \
+          --exclude='.workspace' \
+          --exclude='node_modules' \
+          extracted/ ./
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add .
+          git commit -m "Extract ZIP" || echo "No changes"
+          git push
