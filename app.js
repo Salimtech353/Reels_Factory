@@ -1,10 +1,10 @@
 // ============================================================
 // রিল কারখানা — বাংলা স্ক্রিপ্ট থেকে ভিডিও তৈরি
 // সম্পূর্ণ ক্লায়েন্ট-সাইড অ্যাসেম্বলি (FFmpeg.wasm), Netlify Functions
-// শুধু Groq/OpenRouter/Pexels/Pixabay API প্রক্সি করার জন্য ব্যবহৃত হয়।
+// শুধু Gemini/Pexels/Pixabay API প্রক্সি করার জন্য ব্যবহৃত হয়।
 // ============================================================
 
-import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261001";
+import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20260930";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -33,7 +33,7 @@ applyI18n();
 
 // ---------- state ----------
 const state = {
-  keys: { groq: "", openrouter: "", pexels: "", pixabay: "", shotstack: "", geminiTranscribe: "" },
+  keys: { gemini: "", groq: "", pexels: "", pixabay: "", shotstack: "", geminiTranscribe: "" },
   audioFile: null,
   segments: [], // {id, start, end, startSec, endSec, duration, text, query, entity, mediaType, media:{source,url,thumb,file}}
 };
@@ -44,23 +44,23 @@ function loadKeys() {
     const raw = localStorage.getItem("rk_keys");
     if (raw) state.keys = { ...state.keys, ...JSON.parse(raw) };
   } catch (_) {}
+  $("#geminiKey").value = state.keys.gemini || "";
   $("#groqKey").value = state.keys.groq || "";
-  $("#openrouterKey").value = state.keys.openrouter || "";
   $("#pexelsKey").value = state.keys.pexels || "";
   $("#pixabayKey").value = state.keys.pixabay || "";
   $("#shotstackKey").value = state.keys.shotstack || "";
   $("#geminiTranscribeKey").value = state.keys.geminiTranscribe || "";
 }
 function saveKeys() {
+  state.keys.gemini = $("#geminiKey").value.trim();
   state.keys.groq = $("#groqKey").value.trim();
-  state.keys.openrouter = $("#openrouterKey").value.trim();
   state.keys.pexels = $("#pexelsKey").value.trim();
   state.keys.pixabay = $("#pixabayKey").value.trim();
   state.keys.shotstack = $("#shotstackKey").value.trim();
   state.keys.geminiTranscribe = $("#geminiTranscribeKey").value.trim();
   localStorage.setItem("rk_keys", JSON.stringify(state.keys));
   const el = $("#keysStatus");
-  if (!(state.keys.groq || state.keys.openrouter) || !state.keys.pexels || !state.keys.shotstack) {
+  if (!(state.keys.gemini || state.keys.groq) || !state.keys.pexels || !state.keys.shotstack) {
     setMsg(el, { key: "keysNeed" }, "status-line err");
   } else {
     setMsg(el, { key: "keysSaved" }, "status-line ok");
@@ -385,7 +385,7 @@ $("#transcribeBtn").addEventListener("click", () => {
 
 const MAX_SEGMENT_SEC = 20; // প্রতিটা ট্রান্সক্রিপ্ট সেগমেন্ট এর বেশি লম্বা হবে না
 
-const TRANSCRIBE_MAX_BYTES = 12 * 1024 * 1024; // Gemini/OpenRouter-এর inline অডিও লিমিটের মধ্যে নিরাপদ সীমা
+const TRANSCRIBE_MAX_BYTES = 12 * 1024 * 1024; // Gemini-এর inline অডিও লিমিটের মধ্যে নিরাপদ সীমা
 
 function secToClock(sec) {
   const s = Math.max(0, Math.round(sec));
@@ -433,140 +433,9 @@ function splitLongSegments(segments, maxSec = MAX_SEGMENT_SEC) {
   return out;
 }
 
-// ---------- ট্রান্সক্রিপশন: Gemini (প্রধান) → OpenRouter (ফলব্যাক, মডেল-চেইন) ----------
-const GEMINI_TR_MODEL = "gemini-2.5-flash";
-
-// OpenRouter অডিও-মডেল চেইন: বামে হালকা/দ্রুত → ডানে বেশি শক্তিশালী। OpenRouter-এ নেই এমন মডেল নিজে থেকেই বাদ যায়।
-const OR_AUDIO_MODELS = [
-  "google/gemini-2.5-flash",
-  "google/gemini-3-flash-preview",
-  "google/gemini-2.5-pro",
-  "google/gemini-3-pro-preview",
-  "openai/gpt-4o-audio-preview",
-];
-
-function audioFormatOf(file) {
-  const ext = (file.name.split(".").pop() || "").toLowerCase();
-  const byExt = { mp3: "mp3", wav: "wav", m4a: "m4a", aac: "aac", ogg: "ogg", oga: "ogg", flac: "flac", aiff: "aiff", aif: "aiff", mp4: "m4a" };
-  if (byExt[ext]) return byExt[ext];
-  const mime = (file.type || "").toLowerCase();
-  if (mime.includes("mpeg") || mime.includes("mp3")) return "mp3";
-  if (mime.includes("wav")) return "wav";
-  if (mime.includes("ogg")) return "ogg";
-  if (mime.includes("flac")) return "flac";
-  if (mime.includes("aac")) return "aac";
-  if (mime.includes("mp4") || mime.includes("m4a")) return "m4a";
-  return "mp3";
-}
-
-// মডেলের টেক্সট আউটপুট থেকে সেগমেন্ট অ্যারে বের করা; ব্যর্থ হলে এরর (যাতে পরের মডেল/প্রোভাইডারে যাওয়া যায়)
-function parseTranscriptJson(text) {
-  const cleaned = String(text).replace(/```json|```/g, "").trim();
-  let data;
-  try {
-    data = JSON.parse(cleaned);
-  } catch (_) {
-    const a = cleaned.indexOf("[");
-    const b = cleaned.lastIndexOf("]");
-    if (a < 0 || b <= a) throw new Error(t("errEmptyTr"));
-    data = JSON.parse(cleaned.slice(a, b + 1));
-  }
-  if (data && !Array.isArray(data) && Array.isArray(data.segments)) data = data.segments;
-  if (!Array.isArray(data)) throw new Error(t("errEmptyTr"));
-  const valid = data.filter((s) => s && s.start && s.end && s.text);
-  if (!valid.length) throw new Error(t("errEmptyTr"));
-  return valid;
-}
-
-async function transcribeViaGemini(file, base64) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TR_MODEL}:generateContent?key=${encodeURIComponent(state.keys.geminiTranscribe)}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [{ inline_data: { mime_type: file.type || "audio/mpeg", data: base64 } }, { text: TRANSCRIBE_PROMPT }],
-        },
-      ],
-      generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
-    }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error?.message || t("errTranscribe"));
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error(t("errNoTranscript"));
-  return parseTranscriptJson(text);
-}
-
-async function openRouterAudioChain() {
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 4000);
-    const res = await fetch("https://openrouter.ai/api/v1/models", { signal: ctrl.signal });
-    clearTimeout(timer);
-    if (res.ok) {
-      const ids = new Set(((await res.json())?.data || []).map((m) => m.id));
-      const alive = OR_AUDIO_MODELS.filter((m) => ids.has(m));
-      if (alive.length) return alive;
-    }
-  } catch (_) {}
-  return OR_AUDIO_MODELS;
-}
-
-async function transcribeViaOpenRouter(file, base64, onModel) {
-  const chain = await openRouterAudioChain();
-  const format = audioFormatOf(file);
-  const errors = [];
-  for (const model of chain) {
-    onModel && onModel(model);
-    try {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${state.keys.openrouter}`,
-          "HTTP-Referer": location.origin,
-          "X-Title": "Reel Factory",
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.2,
-          max_tokens: 16000,
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: TRANSCRIBE_PROMPT },
-                { type: "input_audio", input_audio: { data: base64, format } },
-              ],
-            },
-          ],
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) {
-        const err = new Error(data?.error?.message || `HTTP ${res.status}`);
-        err.status = res.status;
-        throw err;
-      }
-      let text = data?.choices?.[0]?.message?.content;
-      if (Array.isArray(text)) text = text.map((p) => p?.text || "").join("");
-      if (!text) throw new Error(t("errNoTranscript"));
-      if (data?.choices?.[0]?.finish_reason === "length") throw new Error("output truncated");
-      return { rawSegments: parseTranscriptJson(text), model };
-    } catch (e) {
-      errors.push(`${model}: ${e.message}`);
-      if (e.status === 401) break; // চাবি ভুল — বাকি মডেলে চেষ্টা বৃথা
-    }
-  }
-  throw new Error(errors.slice(-3).join(" ; "));
-}
-
 async function autoTranscribeAudio(file) {
   let rateLimited = false;
-  if (!state.keys.geminiTranscribe && !state.keys.openrouter) {
+  if (!state.keys.geminiTranscribe) {
     setAudioNotes([{ key: "noTrKey" }]);
     return;
   }
@@ -575,42 +444,44 @@ async function autoTranscribeAudio(file) {
     return;
   }
 
+  setAudioNotes([{ key: "transcribing" }]);
   $("#transcribeBtn").disabled = true;
 
   try {
     const base64 = await fileToBase64(file);
-    let rawSegments = null;
-    let usedModel = "";
-    const errors = [];
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(state.keys.geminiTranscribe)}`;
+    const reqBody = {
+      contents: [
+        {
+          role: "user",
+          parts: [{ inline_data: { mime_type: file.type || "audio/mpeg", data: base64 } }, { text: TRANSCRIBE_PROMPT }],
+        },
+      ],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
+    };
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(reqBody),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || t("errTranscribe"));
 
-    // ১) Gemini (প্রধান)
-    if (state.keys.geminiTranscribe) {
-      setAudioNotes([{ key: "transcribing", params: { name: "Gemini" } }]);
-      try {
-        rawSegments = await transcribeViaGemini(file, base64);
-      } catch (e) {
-        errors.push(`Gemini: ${e.message}`);
-      }
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error(t("errNoTranscript"));
+
+    let rawSegments;
+    try {
+      rawSegments = JSON.parse(text);
+    } catch (_) {
+      rawSegments = JSON.parse(text.replace(/```json|```/g, "").trim());
     }
-
-    // ২) OpenRouter (ফলব্যাক) — একটা মডেল ব্যর্থ হলে পরের শক্তিশালী মডেল
-    if (!rawSegments && state.keys.openrouter) {
-      setAudioNotes([{ key: "transcribing", params: { name: "OpenRouter" } }]);
-      try {
-        const r = await transcribeViaOpenRouter(file, base64, (m) =>
-          setAudioNotes([{ key: "transcribing", params: { name: `OpenRouter · ${m}` } }])
-        );
-        rawSegments = r.rawSegments;
-        usedModel = r.model;
-      } catch (e) {
-        errors.push(`OpenRouter: ${e.message}`);
-      }
-    }
-
-    if (!rawSegments) throw new Error(errors.join(" | ") || t("errTranscribe"));
+    if (!Array.isArray(rawSegments) || !rawSegments.length) throw new Error(t("errEmptyTr"));
 
     // convert "mm:ss" strings to seconds so the segment shape matches what scriptLines expects
-    let segments = rawSegments.map((s) => ({ start: tsToSeconds(s.start), end: tsToSeconds(s.end), text: String(s.text) }));
+    let segments = rawSegments
+      .filter((s) => s.start && s.end && s.text)
+      .map((s) => ({ start: tsToSeconds(s.start), end: tsToSeconds(s.end), text: s.text }));
 
     segments = splitLongSegments(segments);
 
@@ -620,9 +491,7 @@ async function autoTranscribeAudio(file) {
       .join("\n");
     $("#scriptInput").value = scriptLines;
 
-    const notes = [{ key: "trReady", params: { n: segments.length } }];
-    if (usedModel) notes.push({ key: "trViaOr", params: { model: usedModel } });
-    setAudioNotes(notes);
+    setAudioNotes([{ key: "trReady", params: { n: segments.length } }]);
   } catch (err) {
     setAudioNotes([{ key: "trFail", params: { msg: err.message } }], true);
     if (isRateLimitError(err.message)) {
@@ -644,7 +513,7 @@ const keysToggleBtn = $("#keysToggleBtn");
 const keysBody = $("#keysBody");
 function setKeysCollapsed() {} // চাবির অংশ এখন Settings-এর ভেতরে, সবসময় খোলা
 // প্রথমবার যদি প্রয়োজনীয় চাবিগুলো আগে থেকেই সংরক্ষিত থাকে, প্যানেলটা গুটিয়ে রাখা হচ্ছে
-const keysOk = Boolean((state.keys.groq || state.keys.openrouter) && state.keys.pexels && state.keys.shotstack);
+const keysOk = Boolean((state.keys.gemini || state.keys.groq) && state.keys.pexels && state.keys.shotstack);
 if (keysOk) wiz.done.add(1);
 
 // ---------- Settings modal ----------
@@ -659,7 +528,7 @@ $("#settingsModal").addEventListener("click", (e) => {
 if (!keysOk) openSettings(); // প্রথমবার: আগে চাবি বসানোর জন্য
 renderStepper();
 
-// ---------- analyze script (calls /api/keywords -> Groq, ব্যর্থ হলে OpenRouter) ----------
+// ---------- analyze script (calls /api/keywords -> Gemini) ----------
 $("#analyzeBtn").addEventListener("click", async () => {
   const analyzeBtn = $("#analyzeBtn");
   const raw = $("#scriptInput").value;
@@ -670,7 +539,7 @@ $("#analyzeBtn").addEventListener("click", async () => {
     setMsg(statusEl, { key: "noValidSeg" }, "status-line err");
     return;
   }
-  if (!state.keys.groq && !state.keys.openrouter) {
+  if (!state.keys.gemini && !state.keys.groq) {
     setMsg(statusEl, { key: "needGemini" }, "status-line err");
     return;
   }
@@ -686,8 +555,8 @@ $("#analyzeBtn").addEventListener("click", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        apiKey: state.keys.gemini,
         groqKey: state.keys.groq,
-        openrouterKey: state.keys.openrouter,
         segments: segments.map((s) => ({ id: s.id, text: s.text, duration: s.duration })),
       }),
     });
@@ -712,9 +581,7 @@ $("#analyzeBtn").addEventListener("click", async () => {
     markStepActive(4);
     setMsg(
       statusEl,
-      data.provider === "openrouter"
-        ? [{ key: "analyzeDone" }, { key: "viaOpenRouter", params: { model: data.model || "" } }]
-        : { key: "analyzeDone" },
+      data.provider === "groq" ? [{ key: "analyzeDone" }, { key: "viaGroq" }] : { key: "analyzeDone" },
       "status-line ok"
     );
     $("#panelBuild").hidden = false;
@@ -724,9 +591,9 @@ $("#analyzeBtn").addEventListener("click", async () => {
   } catch (err) {
     const errPart = { key: "errPrefix", params: { msg: err.message } };
     setMsg(statusEl, [errPart], "status-line err");
-    // কাউন্টডাউন নেই: Groq ফেল করলে সার্ভার সাথে সাথে OpenRouter-এ যায়। OpenRouter চাবি না থাকলে শুধু পরামর্শ দেখানো হয়।
-    if (isRateLimitError(err.message) && !state.keys.openrouter) {
-      setMsg(statusEl, [errPart, { key: "addOrHint" }], "status-line err");
+    // কাউন্টডাউন নেই: Gemini ফেল করলে সার্ভার সাথে সাথে Groq-এ যায়। Groq চাবি না থাকলে শুধু পরামর্শ দেখানো হয়।
+    if (isRateLimitError(err.message) && !state.keys.groq) {
+      setMsg(statusEl, [errPart, { key: "addGroqHint" }], "status-line err");
     }
   } finally {
     analyzeBtn.disabled = false;
