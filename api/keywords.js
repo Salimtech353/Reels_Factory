@@ -14,11 +14,12 @@ const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || "llama-3.3-70b-ve
 // যে মডেল OpenRouter-এ আর নেই সেটা নিজে থেকেই বাদ পড়ে; শেষে openrouter/auto সবকিছুর শেষ ভরসা।
 // বদলাতে চাইলে Netlify-র Environment variable-এ OPENROUTER_MODELS দিন (কমা দিয়ে আলাদা করে)।
 const DEFAULT_OPENROUTER_MODELS = [
+  "openrouter/free",
+  "openrouter/auto"
   "google/gemma-4-31b-it:free",
   "meta-llama/llama-3.3-70b-instruct:free",
   "qwen/qwen-2.5-72b-instruct:free",
-  "mistralai/mistral-7b-instruct:free",
-  "openrouter/auto"
+  "mistralai/mistral-7b-instruct:free"
 ];
 
 const OPENROUTER_MODELS = (process.env.OPENROUTER_MODELS || "")
@@ -26,7 +27,7 @@ const OPENROUTER_MODELS = (process.env.OPENROUTER_MODELS || "")
   .map((s) => s.trim())
   .filter(Boolean);
 
-const BATCH_SIZE = 40; // এর বেশি সেগমেন্ট হলে ভাগ করে পাঠানো হয়
+const BATCH_SIZE = 20; // এর বেশি সেগমেন্ট হলে ভাগ করে পাঠানো হয়
 const TOTAL_BUDGET_MS = 24000; // Netlify ফাংশনের সময়সীমার ভেতরে থাকার জন্য মোট বাজেট
 const MIN_COVERAGE = 0.8; // মডেল অন্তত ৮০% সেগমেন্টের উত্তর না দিলে সেটাকে ব্যর্থ ধরে পরের মডেলে যাওয়া হয়
 
