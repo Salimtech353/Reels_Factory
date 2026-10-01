@@ -15,7 +15,7 @@ jobs:
 
       - name: Extract ZIP
         run: |
-          unzip webapp-666.zip -d extracted
+          unzip webapp-vercel.zip -d extracted
 
       - name: Copy files safely
         run: |
