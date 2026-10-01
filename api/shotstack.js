@@ -9,73 +9,72 @@
 const BASE = "https://api.shotstack.io";
 const ENV = "stage"; // free sandbox environment (watermarked output)
 
-exports.handler = async (event) => {
-  if (event.httpMethod !== "POST") {
-    return { statusCode: 405, body: JSON.stringify({ error: "POST only" }) };
+module.exports = async (req, response) => {
+  if (req.method !== "POST") {
+    return response.status(405).json({ error: "POST only" });
   }
 
-  let body;
-  try {
-    body = JSON.parse(event.body);
-  } catch (e) {
-    return { statusCode: 400, body: JSON.stringify({ error: "Invalid JSON body" }) };
+  let body = req.body;
+  if (typeof body === "string") {
+    try {
+      body = JSON.parse(body);
+    } catch (e) {
+      return response.status(400).json({ error: "Invalid JSON body" });
+    }
   }
+  body = body || {};
 
   const { action, apiKey } = body;
-  if (!apiKey) return { statusCode: 400, body: JSON.stringify({ error: "apiKey missing" }) };
+  if (!apiKey) return response.status(400).json({ error: "apiKey missing" });
 
   try {
     switch (action) {
       case "upload-url":
-        return await handleUploadUrl(apiKey);
+        return await handleUploadUrl(apiKey, response);
       case "source-status":
-        return await handleSourceStatus(apiKey, body.id);
+        return await handleSourceStatus(apiKey, body.id, response);
       case "render":
-        return await handleRender(apiKey, body.timeline, body.resolution, body.aspectRatio);
+        return await handleRender(apiKey, body.timeline, body.resolution, body.aspectRatio, response);
       case "render-status":
-        return await handleRenderStatus(apiKey, body.id);
+        return await handleRenderStatus(apiKey, body.id, response);
       default:
-        return { statusCode: 400, body: JSON.stringify({ error: "Unknown action" }) };
+        return response.status(400).json({ error: "Unknown action" });
     }
   } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    return response.status(500).json({ error: err.message });
   }
 };
 
-function ok(payload) {
-  return { statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
-}
-
-async function handleUploadUrl(apiKey) {
+async function handleUploadUrl(apiKey, response) {
   const res = await fetch(`${BASE}/ingest/${ENV}/upload`, {
     method: "POST",
     headers: { "x-api-key": apiKey, Accept: "application/json" },
   });
   const data = await res.json();
-  if (!res.ok) return { statusCode: res.status, body: JSON.stringify({ error: data?.message || "Upload URL request failed" }) };
+  if (!res.ok) return response.status(res.status).json({ error: data?.message || "Upload URL request failed" });
   const id = data?.data?.id;
   const uploadUrl = data?.data?.attributes?.url;
-  if (!id || !uploadUrl) return { statusCode: 502, body: JSON.stringify({ error: "Unexpected Shotstack response" }) };
-  return ok({ id, uploadUrl });
+  if (!id || !uploadUrl) return response.status(502).json({ error: "Unexpected Shotstack response" });
+  return response.status(200).json({ id, uploadUrl });
 }
 
-async function handleSourceStatus(apiKey, id) {
-  if (!id) return { statusCode: 400, body: JSON.stringify({ error: "id missing" }) };
+async function handleSourceStatus(apiKey, id, response) {
+  if (!id) return response.status(400).json({ error: "id missing" });
   const res = await fetch(`${BASE}/ingest/${ENV}/sources/${id}`, {
     headers: { "x-api-key": apiKey, Accept: "application/json" },
   });
   const data = await res.json();
-  if (!res.ok) return { statusCode: res.status, body: JSON.stringify({ error: data?.message || "Source status request failed" }) };
+  if (!res.ok) return response.status(res.status).json({ error: data?.message || "Source status request failed" });
   const attrs = data?.data?.attributes || {};
-  return ok({
+  return response.status(200).json({
     status: attrs.status,
     url: attrs.source || attrs.url || attrs?.outputs?.source || null,
     error: attrs.error || null,
   });
 }
 
-async function handleRender(apiKey, timeline, resolution, aspectRatio) {
-  if (!timeline) return { statusCode: 400, body: JSON.stringify({ error: "timeline missing" }) };
+async function handleRender(apiKey, timeline, resolution, aspectRatio, response) {
+  if (!timeline) return response.status(400).json({ error: "timeline missing" });
   const res = await fetch(`${BASE}/edit/${ENV}/render`, {
     method: "POST",
     headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
@@ -85,19 +84,19 @@ async function handleRender(apiKey, timeline, resolution, aspectRatio) {
     }),
   });
   const data = await res.json();
-  if (!res.ok) return { statusCode: res.status, body: JSON.stringify({ error: data?.message || "Render request failed" }) };
+  if (!res.ok) return response.status(res.status).json({ error: data?.message || "Render request failed" });
   const id = data?.response?.id;
-  if (!id) return { statusCode: 502, body: JSON.stringify({ error: "Unexpected Shotstack response" }) };
-  return ok({ id });
+  if (!id) return response.status(502).json({ error: "Unexpected Shotstack response" });
+  return response.status(200).json({ id });
 }
 
-async function handleRenderStatus(apiKey, id) {
-  if (!id) return { statusCode: 400, body: JSON.stringify({ error: "id missing" }) };
+async function handleRenderStatus(apiKey, id, response) {
+  if (!id) return response.status(400).json({ error: "id missing" });
   const res = await fetch(`${BASE}/edit/${ENV}/render/${id}`, {
     headers: { "x-api-key": apiKey, Accept: "application/json" },
   });
   const data = await res.json();
-  if (!res.ok) return { statusCode: res.status, body: JSON.stringify({ error: data?.message || "Render status request failed" }) };
+  if (!res.ok) return response.status(res.status).json({ error: data?.message || "Render status request failed" });
   const r = data?.response || {};
-  return ok({ status: r.status, url: r.url || null, error: r.error || null });
+  return response.status(200).json({ status: r.status, url: r.url || null, error: r.error || null });
 }

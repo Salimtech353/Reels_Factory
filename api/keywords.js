@@ -359,22 +359,25 @@ async function analyzeBatch(batch, groqKey, orKey, ctx) {
   return { provider, model: result.model, segments: normalize(result.parsed, batch) };
 }
 
-exports.handler = async (event) => {
-  if (event.httpMethod !== "POST") {
-    return { statusCode: 405, body: JSON.stringify({ error: "POST only" }) };
+module.exports = async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "POST only" });
   }
 
-  let body;
-  try {
-    body = JSON.parse(event.body);
-  } catch (e) {
-    return { statusCode: 400, body: JSON.stringify({ error: "Invalid JSON body" }) };
+  let body = req.body;
+  if (typeof body === "string") {
+    try {
+      body = JSON.parse(body);
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid JSON body" });
+    }
   }
+  body = body || {};
 
   const { groqKey, openrouterKey, segments } = body;
-  if (!groqKey && !openrouterKey) return { statusCode: 400, body: JSON.stringify({ error: "API key missing (Groq / OpenRouter)" }) };
+  if (!groqKey && !openrouterKey) return res.status(400).json({ error: "API key missing (Groq / OpenRouter)" });
   if (!Array.isArray(segments) || !segments.length) {
-    return { statusCode: 400, body: JSON.stringify({ error: "segments missing" }) };
+    return res.status(400).json({ error: "segments missing" });
   }
 
   const ctx = { deadline: Date.now() + TOTAL_BUDGET_MS };
@@ -391,12 +394,9 @@ exports.handler = async (event) => {
       }
       all.push(...r.segments);
     }
-    return {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider, model, segments: all }),
-    };
+    return res.status(200).json({ provider, model, segments: all });
   } catch (err) {
-    return { statusCode: err.status >= 400 && err.status < 600 ? err.status : 500, body: JSON.stringify({ error: err.message }) };
+    const status = err.status >= 400 && err.status < 600 ? err.status : 500;
+    return res.status(status).json({ error: err.message });
   }
 };
