@@ -14,11 +14,12 @@ const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || "llama-3.3-70b-ve
 // যে মডেল OpenRouter-এ আর নেই সেটা নিজে থেকেই বাদ পড়ে; শেষে openrouter/auto সবকিছুর শেষ ভরসা।
 // বদলাতে চাইলে Netlify-র Environment variable-এ OPENROUTER_MODELS দিন (কমা দিয়ে আলাদা করে)।
 const DEFAULT_OPENROUTER_MODELS = [
-  "google/gemma-4-31b-it:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "qwen/qwen-2.5-72b-instruct:free",
-  "mistralai/mistral-7b-instruct:free",
-  "openrouter/auto"
+  "openai/gpt-oss-120b",
+  "google/gemini-2.5-flash",
+  "deepseek/deepseek-chat-v3.1",
+  "google/gemini-2.5-pro",
+  "anthropic/claude-sonnet-4.5",
+  "openrouter/auto",
 ];
 
 const OPENROUTER_MODELS = (process.env.OPENROUTER_MODELS || "")
