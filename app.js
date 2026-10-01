@@ -434,7 +434,7 @@ function splitLongSegments(segments, maxSec = MAX_SEGMENT_SEC) {
 }
 
 // ---------- ট্রান্সক্রিপশন: Gemini (প্রধান) → OpenRouter (ফলব্যাক, মডেল-চেইন) ----------
-const GEMINI_TR_MODEL = "gemini-3.6-flash";
+const GEMINI_TR_MODEL = "gemini-2.5-flash";
 
 // OpenRouter অডিও-মডেল চেইন: বামে হালকা/দ্রুত → ডানে বেশি শক্তিশালী। OpenRouter-এ নেই এমন মডেল নিজে থেকেই বাদ যায়।
 const OR_AUDIO_MODELS = [
