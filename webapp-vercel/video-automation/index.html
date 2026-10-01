@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Reel Factory — Script to Video</title>
+<script>
+  (function () {
+    try {
+      var th = localStorage.getItem("rk_theme");
+      document.documentElement.setAttribute("data-theme", th === "light" ? "light" : "dark");
+      document.documentElement.lang = localStorage.getItem("rk_lang") === "bn" ? "bn" : "en";
+    } catch (e) {}
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Galada&family=Atma:wght@400&family=Mina:wght@400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css?v=20261001" />
+</head>
+<body data-step="2">
+
+<header class="topbar">
+  <div class="top-row">
+    <div class="brand"><span class="brand-mark" data-i18n="brandMark">Reel</span><span class="brand-sub" data-i18n="brandSub">Factory</span></div>
+    <div class="tools">
+      <button type="button" class="tool-btn" id="openSettings" data-i18n-aria="settings"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M10.9 12.1 20 3"/><path d="m17 6 3 3"/><path d="m14 9 2 2"/></svg><span class="tool-label" data-i18n="settings"></span></button>
+      <div class="lang-switch" role="group" data-i18n-aria="langGroup">
+        <button type="button" class="lang-btn" id="langBn" data-lang="bn">BN</button>
+        <button type="button" class="lang-btn" id="langEn" data-lang="en">EN</button>
+      </div>
+      <button type="button" class="theme-btn" id="themeBtn"><span id="themeIcon">☾</span></button>
+    </div>
+  </div>
+  <ol class="m-steps" id="mSteps">
+    <li data-step="1"><span class="ind"></span></li><li data-step="2"><span class="ind"></span></li><li data-step="3"><span class="ind"></span></li><li data-step="4"><span class="ind"></span></li><li data-step="5"><span class="ind"></span></li>
+  </ol>
+  <p class="m-label"><b class="step-of"></b> · <span class="step-name"></span></p>
+</header>
+
+<div class="app">
+  <aside class="rail">
+    <p class="rail-of step-of"></p>
+    <ol class="rail-steps" id="railSteps">
+      <li data-step="1"><span class="ind"></span><span class="lbl" data-i18n="step1"></span></li>
+      <li data-step="2"><span class="ind"></span><span class="lbl" data-i18n="step2"></span></li>
+      <li data-step="3"><span class="ind"></span><span class="lbl" data-i18n="step3"></span></li>
+      <li data-step="4"><span class="ind"></span><span class="lbl" data-i18n="step4"></span></li>
+      <li data-step="5"><span class="ind"></span><span class="lbl" data-i18n="step5"></span></li>
+    </ol>
+    <footer class="site-footer">Designed By Salim</footer>
+  </aside>
+
+  <main class="stage">
+
+    <!-- STEP 2: audio & script -->
+    <section class="wiz card" id="intake">
+      <h1 data-i18n="h1"></h1>
+      <p class="lead" data-i18n="lead"></p>
+
+      <div class="audio-section">
+        <div class="audio-section-title" data-i18n="audioLabel"></div>
+        <label class="audio-drop" id="audioDrop" for="audioInput">
+          <span class="audio-drop-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path d="M8.5 21h7"/></svg></span>
+          <span class="audio-drop-text"><strong data-i18n="audioDropTitle"></strong><em data-i18n="audioDropSub"></em></span>
+          <span class="audio-drop-btn"><span class="when-empty" data-i18n="audioChoose"></span><span class="when-file" data-i18n="audioChange"></span></span>
+          <input type="file" id="audioInput" accept="audio/*" />
+        </label>
+        <p class="audio-meta" id="audioMeta"></p>
+        <p class="hint audio-default" id="audioDefaultNote" data-i18n="audioDefaultNote"></p>
+        <button class="btn btn-primary" id="transcribeBtn" type="button" disabled data-i18n="transcribeBtn"></button>
+        <p class="hint" data-i18n="transcribeHint"></p>
+      </div>
+
+      <label class="field">
+        <span data-i18n="scriptLabel"></span>
+        <textarea id="scriptInput" rows="16" spellcheck="false" data-i18n-placeholder="scriptPh"></textarea>
+      </label>
+      <p class="hint" data-i18n-html="scriptHint"></p>
+
+      <div class="field format-field">
+        <span data-i18n="formatTop"></span>
+        <small class="field-hint" data-i18n="formatTopHint"></small>
+        <select id="aspectTop">
+          <option value="16:9" selected data-i18n="asp169"></option>
+          <option value="9:16" data-i18n="asp916"></option>
+          <option value="1:1" data-i18n="asp11"></option>
+        </select>
+      </div>
+
+      <button class="btn btn-primary btn-lg" id="analyzeBtn" data-i18n="analyzeBtn"></button>
+      <p class="status-line" id="analyzeStatus"></p>
+
+      <div class="recent-wrap">
+        <h3 class="section-title" data-i18n="recentTitle"></h3>
+        <p class="hint" data-i18n="recentHint"></p>
+        <ul class="recent-list" id="recentList"></ul>
+      </div>
+    </section>
+
+    <!-- STEPS 3-4: scenes -->
+    <section class="wiz card" id="timeline" hidden>
+      <div class="timeline-head">
+        <div>
+          <h2 data-i18n="timelineTitle"></h2>
+          <p class="hint" data-i18n="timelineHint"></p>
+        </div>
+        <div class="scene-progress">
+          <b id="sceneProgress"></b>
+          <div class="bar"><i id="sceneBar"></i></div>
+        </div>
+      </div>
+      <div class="segments" id="segmentsList"></div>
+      <div class="wiz-nav">
+        <button type="button" class="btn btn-ghost" id="backToScript" data-i18n="stepBack"></button>
+        <button type="button" class="btn btn-primary btn-lg" id="toRenderBtn" disabled data-i18n="toRender"></button>
+      </div>
+    </section>
+
+    <!-- STEP 5: render -->
+    <section class="wiz card" id="panelBuild" hidden>
+      <div class="render-setup">
+        <h2 data-i18n="renderTitle"></h2>
+        <p class="hint" data-i18n="buildHint"></p>
+        <div class="summary">
+          <div><small data-i18n="sumDuration"></small><b id="sumDuration">–</b></div>
+          <div><small data-i18n="sumScenes"></small><b id="sumScenes">–</b></div>
+          <div><small data-i18n="sumRes"></small><b id="sumRes">–</b></div>
+        </div>
+        <details class="adv">
+          <summary data-i18n="adv"></summary>
+          <div class="adv-body">
+            <div class="field">
+        <span data-i18n="formatLabel"></span>
+        <select id="aspectSelect">
+          <option value="16:9" selected data-i18n="asp169"></option>
+          <option value="9:16" data-i18n="asp916"></option>
+          <option value="1:1" data-i18n="asp11"></option>
+        </select>
+      </div>
+      <div class="field">
+        <span data-i18n="resLabel"></span>
+        <select id="resSelect">
+          <option value="854x480" data-i18n="resSd"></option>
+          <option value="1280x720" selected data-i18n="resHd"></option>
+          <option value="1920x1080" data-i18n="resFhd"></option>
+        </select>
+      </div>
+      <div class="field">
+        <span data-i18n="borderLabel"></span>
+        <select id="borderSelect">
+          <option value="0" data-i18n="b0"></option>
+          <option value="6" data-i18n="b6"></option>
+          <option value="10" data-i18n="b10"></option>
+          <option value="12" selected data-i18n="b12"></option>
+          <option value="13" data-i18n="b13"></option>
+          <option value="15" data-i18n="b15"></option>
+        </select>
+      </div>
+      <label class="field checkbox-field">
+        <input type="checkbox" id="captionToggle" checked />
+        <span data-i18n="captionToggle"></span>
+      </label>
+
+      <div class="caption-options" id="captionOptions">
+        <div class="field">
+          <span><span data-i18n="capFontLabel"></span> <em data-i18n="capFontNote"></em></span>
+          <select id="captionFontSelect">
+            <option value="hind" selected data-i18n="fHind"></option>
+            <option value="kolpona" data-i18n="fKolpona"></option>
+            <option value="kolponaI" data-i18n="fKolponaI"></option>
+            <option value="galada" data-i18n="fGalada"></option>
+            <option value="atma" data-i18n="fAtma"></option>
+            <option value="mina" data-i18n="fMina"></option>
+          </select>
+        </div>
+        <p class="font-preview" id="fontPreview">আমার সোনার বাংলা · Reel Factory</p>
+        <div class="field">
+          <span><span data-i18n="capSizeLabel"></span> <em data-i18n="capSizeNote"></em></span>
+          <select id="captionSizeSelect">
+            <option value="8" data-i18n="s8"></option>
+            <option value="9" data-i18n="s9"></option>
+            <option value="10" data-i18n="s10"></option>
+            <option value="11" data-i18n="s11"></option>
+            <option value="12" data-i18n="s12"></option>
+            <option value="13" selected data-i18n="s13"></option>
+            <option value="14" data-i18n="s14"></option>
+            <option value="15" data-i18n="s15"></option>
+            <option value="16" data-i18n="s16"></option>
+            <option value="17" data-i18n="s17"></option>
+            <option value="18" data-i18n="s18"></option>
+          </select>
+        </div>
+        <div class="field">
+          <span data-i18n="capColorLabel"></span>
+          <select id="captionColorSelect">
+            <option value="#ffffff" selected data-i18n="cWhite"></option>
+            <option value="#FFD400" data-i18n="cYellow"></option>
+            <option value="#2ECC71" data-i18n="cGreen"></option>
+            <option value="#FF3B30" data-i18n="cRed"></option>
+            <option value="#00E5FF" data-i18n="cCyan"></option>
+            <option value="#000000" data-i18n="cBlack"></option>
+          </select>
+        </div>
+        <div class="field">
+          <span data-i18n="capAnimLabel"></span>
+          <select id="captionAnimSelect">
+            <option value="typewriter" selected data-i18n="aTypewriter"></option>
+            <option value="fade" data-i18n="aFade"></option>
+            <option value="slideUp" data-i18n="aSlideUp"></option>
+            <option value="slideLeft" data-i18n="aSlideLeft"></option>
+            <option value="zoom" data-i18n="aZoom"></option>
+            <option value="wipeLeft" data-i18n="aWipe"></option>
+            <option value="none" data-i18n="aNone"></option>
+          </select>
+        </div>
+      </div>
+          </div>
+        </details>
+        <div class="wiz-nav">
+          <button type="button" class="btn btn-ghost" id="backToScenes" data-i18n="stepBack"></button>
+          <button class="btn btn-primary btn-lg" id="buildBtn" disabled data-i18n="buildBtn"></button>
+        </div>
+      </div>
+
+      <div class="progress-wrap" id="progressWrap" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <h2 class="progress-title" data-i18n="renderingTitle"></h2>
+        <p class="progress-label"><span id="progressLabel" data-i18n="progressInit"></span></p>
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <p class="progress-pct" id="progressPercent">0%</p>
+      </div>
+
+      <div id="resultBox" hidden>
+        <h2 class="done-title">✓ <span data-i18n="doneTitle"></span></h2>
+        <video id="resultVideo" controls playsinline></video>
+        <div class="result-actions">
+          <button type="button" class="btn btn-secondary" id="previewBtn" data-i18n="previewBtn"></button>
+          <a class="btn btn-primary" id="downloadBtn" target="_blank" rel="noopener" download data-i18n="dlMp4"></a>
+          <button type="button" class="btn btn-secondary" id="copyLinkBtn" data-i18n="copyLink"></button>
+          <button type="button" class="btn btn-ghost" id="createAnotherBtn" data-i18n="createAnother"></button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- Settings (API keys + preferences) -->
+<div class="modal" id="settingsModal" hidden>
+  <div class="modal-card settings-card">
+    <div class="modal-head">
+      <h3 data-i18n="settings"></h3>
+      <button class="icon-btn" id="settingsClose" type="button">✕</button>
+    </div>
+    <div class="settings-body">
+      <section id="panelKeys">
+        <div id="keysToggleBtn" class="keys-head"><h4 class="section-title" data-i18n="keysTitle"></h4><span id="keysChevron" hidden></span></div>
+        <div id="keysBody">
+      <p class="hint" data-i18n="keysHint"></p>
+
+      <label class="field">
+        <span><span data-i18n="groqLabel"></span> <a href="https://console.groq.com/keys" target="_blank" rel="noopener" data-i18n="getKey"></a></span>
+        <input type="password" id="groqKey" placeholder="gsk_..." autocomplete="off" />
+      </label>
+      <p class="hint" style="margin-top:-10px;" data-i18n="groqHint"></p>
+
+      <label class="field">
+        <span><span data-i18n="orLabel"></span> <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" data-i18n="getKey"></a></span>
+        <input type="password" id="openrouterKey" placeholder="sk-or-v1-..." autocomplete="off" />
+      </label>
+      <p class="hint" style="margin-top:-10px;" data-i18n="orHint"></p>
+
+      <label class="field">
+        <span><span data-i18n="geminiTrLabel"></span> <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" data-i18n="getKey"></a></span>
+        <input type="password" id="geminiTranscribeKey" placeholder="AIza..." autocomplete="off" />
+      </label>
+      <p class="hint" style="margin-top:-10px;" data-i18n-html="geminiTrHint"></p>
+
+      <label class="field">
+        <span><span>Pexels API Key</span> <a href="https://www.pexels.com/api/" target="_blank" rel="noopener" data-i18n="getKey"></a></span>
+        <input type="password" id="pexelsKey" placeholder="563492ad..." autocomplete="off" />
+      </label>
+
+      <label class="field">
+        <span><span>Pixabay API Key</span> <em data-i18n="pixabayOpt"></em> <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener" data-i18n="getKey"></a></span>
+        <input type="password" id="pixabayKey" placeholder="12345678-abc..." autocomplete="off" />
+      </label>
+
+      <label class="field">
+        <span><span>Shotstack API Key</span> <a href="https://dashboard.shotstack.io/register" target="_blank" rel="noopener" data-i18n="getKey"></a></span>
+        <input type="password" id="shotstackKey" placeholder="sandbox key..." autocomplete="off" />
+      </label>
+      <p class="hint" data-i18n="shotstackHint"></p>
+      <button class="btn btn-primary" id="saveKeysBtn" data-i18n="saveKeys"></button>
+      <p class="status-line" id="keysStatus"></p>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- Media picker modal -->
+<div class="modal" id="pickerModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3 id="pickerTitle" data-i18n="pickerTitleDefault"></h3>
+      <button class="icon-btn" id="pickerClose">✕</button>
+    </div>
+    <div class="modal-search">
+      <input type="text" id="pickerQuery" data-i18n-placeholder="queryPh" />
+      <select id="pickerType">
+        <option value="videos" data-i18n="optVideos"></option>
+        <option value="photos" data-i18n="optPhotos"></option>
+      </select>
+      <button class="btn btn-ghost" id="pickerSearchBtn" data-i18n="searchBtn"></button>
+    </div>
+    <div class="modal-results" id="pickerResults"></div>
+    <div class="modal-pager">
+      <button type="button" class="btn btn-ghost" id="pickerPrevBtn" data-i18n="prevBtn"></button>
+      <span id="pickerPageLabel" class="hint"></span>
+      <button type="button" class="btn btn-ghost" id="pickerNextBtn" data-i18n="nextBtn"></button>
+    </div>
+    <div class="modal-upload">
+      <span data-i18n="uploadOr"></span>
+      <input type="file" id="pickerUpload" accept="image/*,video/*" />
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script type="module" src="app.js?v=20261001"></script>
+</body>
+</html>
