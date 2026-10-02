@@ -22,7 +22,7 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: "apiKey/query missing" });
   }
 // ⚠️ আইকন মুছে পরিষ্কার সার্চ কিউরি তৈরি করা হলো
-  const query = rawQuery.replace(/^⚠️\s*/, "").trim();
+//  const query = rawQuery.replace(/^⚠️\s*/, "").trim();
 
   try {
     if (provider === "pexels") {
