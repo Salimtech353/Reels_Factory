@@ -422,10 +422,42 @@ function sleep(ms) {
 // সব মডেল ব্যর্থ হলে প্রতিটা সেগমেন্টের জন্য একটা সাধারণ, নিরাপদ ডিফল্ট কোয়েরি —
 // যাতে ব্যবহারকারী পুরোপুরি খালি হাতে না থেকে অন্তত কিছু একটা ফলাফল (ও ম্যানুয়ালি এডিট করার সুযোগ) পান।
 function fallbackSegments(batch) {
-  return batch.map((s) => ({
-    id: s.id,
-    entity: "",
-    queries: ["cinematic b-roll footage", "abstract background motion", "generic lifestyle footage", "nature establishing shot"],
-    mediaType: "video",
-  }));
+  // ঐতিহাসিক স্থানের সাথে ন্যাচারাল সিন (নদী, পাহাড়, বন, ড্রোন শট) এর কম্বিনেশন
+  const historicalQueryPool = [
+    [
+      "⚠️ ancient stone palace arch architecture",
+      "⚠️ river scenic beauty aerial drone view",
+      "⚠️ cinematic historical brick ruins",
+      "⚠️ misty green forest wilderness drone shot"
+    ],
+    [
+      "⚠️ vintage historical landmark establishing shot",
+      "⚠️ mountain foggy landscape cinematic drone",
+      "⚠️ ancient terracotta temple details",
+      "⚠️ tranquil river nature sunset landscape"
+    ],
+    [
+      "⚠️ historical fort wall cinematic footage",
+      "⚠️ lush green tropical forest nature view",
+      "⚠️ ancient culture traditional heritage site",
+      "⚠️ winding rural road village landscape drone"
+    ],
+    [
+      "⚠️️ ancient royal hall corridor interior",
+      "⚠️ dramatic mountain valley aerial footage",
+      "⚠️ archaeological excavation site drone shot",
+      "⚠️ wide river stream scenic nature background"
+    ]
+  ];
+
+  return batch.map((s, index) => {
+    const querySet = historicalQueryPool[index % historicalQueryPool.length];
+
+    return {
+      id: s.id,
+      entity: "Historical Heritage & Nature",
+      queries: querySet,
+      mediaType: "video",
+    };
+  });
 }
