@@ -8,17 +8,19 @@
 // আউটপুট সবসময় ইংরেজি সার্চ কি-ওয়ার্ড (UI-র ভাষা যাই হোক)।
 
 const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
-const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || "llama-3.3-70b-versatile";
+// llama-3.3-70b-versatile Groq থেকে সরিয়ে ফেলা হয়েছে (deprecated) — ছোট/দ্রুত ও দীর্ঘদিন ধরে
+// স্থিতিশীল থাকা llama-3.1-8b-instant এখন ব্যাকআপ হিসেবে ব্যবহার হচ্ছে।
+const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || "llama-3.1-8b-instant";
 
 // OpenRouter মডেল-চেইন: বামে হালকা/দ্রুত → ডানে বেশি শক্তিশালী ও বড় কনটেক্সট।
-// যে মডেল OpenRouter-এ আর নেই সেটা নিজে থেকেই বাদ পড়ে; শেষে openrouter/auto সবকিছুর শেষ ভরসা।
-// বদলাতে চাইলে Netlify-র Environment variable-এ OPENROUTER_MODELS দিন (কমা দিয়ে আলাদা করে)।
+// ফ্রি মডেলের তালিকা OpenRouter-এ প্রায়ই বদলায় (কোনোটা deprecated হয়, কোনোটা সাময়িক ব্যস্ত থাকে),
+// তাই শেষে "openrouter/free" রাখা হয়েছে — এটা একটা অটো-রাউটার যেটা নিজে থেকেই তখনকার সচল একটা
+// ফ্রি মডেল বেছে নেয়, তাই কোনো নির্দিষ্ট নাম না পেলেও শেষ ভরসা হিসেবে এটা কাজ করে।
+// বদলাতে চাইলে Vercel-এর Environment variable-এ OPENROUTER_MODELS দিন (কমা দিয়ে আলাদা করে)।
 const DEFAULT_OPENROUTER_MODELS = [
   "google/gemma-4-31b-it:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "qwen/qwen-2.5-72b-instruct:free",
-  "mistralai/mistral-7b-instruct:free",
-  "openrouter/auto",
+  "qwen/qwen3.8-27b:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",
   "openrouter/free"
 ];
 
@@ -27,8 +29,9 @@ const OPENROUTER_MODELS = (process.env.OPENROUTER_MODELS || "")
   .map((s) => s.trim())
   .filter(Boolean);
 
-const BATCH_SIZE = 40; // 40 এর বেশি সেগমেন্ট হলে ভাগ করে পাঠানো হয়
-const TOTAL_BUDGET_MS = 24000; // Netlify ফাংশনের সময়সীমার ভেতরে থাকার জন্য মোট বাজেট
+const BATCH_SIZE = 10; // ছোট ব্যাচ — বড় স্ক্রিপ্টেও প্রতিটা API কল হালকা থাকে, ব্যর্থ হওয়ার সম্ভাবনা কমে
+const BATCH_DELAY_MS = 800; // দুটো ব্যাচের মাঝে এই বিরতি — rate-limit/burst এড়ানোর জন্য
+const TOTAL_BUDGET_MS = 50000; // Vercel-এ ফাংশনের সময়সীমা ৬০ সেকেন্ড (vercel.json), ১০ সেকেন্ড বাফার রাখা হয়েছে
 const MIN_COVERAGE = 0.8; // মডেল অন্তত ৮০% সেগমেন্টের উত্তর না দিলে সেটাকে ব্যর্থ ধরে পরের মডেলে যাওয়া হয়
 
 const SYSTEM_PROMPT = `You are an expert stock-footage researcher and video editor. You receive segments of a Bangla (Bengali) voiceover script. For EACH segment, produce English search queries for stock video/photo sites (Pexels, Pixabay) that return footage which visually matches what the narrator is saying at that moment.
@@ -382,22 +385,47 @@ module.exports = async (req, res) => {
   }
 
   const ctx = { deadline: Date.now() + TOTAL_BUDGET_MS };
-  try {
-    const all = [];
-    let provider = "groq";
-    let model = "";
-    for (let i = 0; i < segments.length; i += BATCH_SIZE) {
-      const r = await analyzeBatch(segments.slice(i, i + BATCH_SIZE), groqKey, openrouterKey, ctx);
+  const all = [];
+  let provider = "groq";
+  let model = "";
+  let fallbackUsed = false;
+  let fallbackReason = "";
+
+  for (let i = 0; i < segments.length; i += BATCH_SIZE) {
+    if (i > 0) await sleep(BATCH_DELAY_MS); // ব্যাচে ব্যাচে একটু বিরতি — rate-limit/burst এড়ানোর জন্য
+    const batch = segments.slice(i, i + BATCH_SIZE);
+    try {
+      const r = await analyzeBatch(batch, groqKey, openrouterKey, ctx);
       // কোনো একটা ব্যাচও OpenRouter-এ গেলে সেটাই জানানো হয়
       if (r.provider === "openrouter" || !model) {
         provider = r.provider;
         model = r.model;
       }
       all.push(...r.segments);
+    } catch (err) {
+      // এই ব্যাচের সব মডেল (Groq + OpenRouter চেইন) ব্যর্থ হলেও পুরো রিকোয়েস্ট বাতিল না করে
+      // এই ব্যাচের সেগমেন্টগুলোর জন্য একটা নিরাপদ ডিফল্ট কোয়েরি বসিয়ে এগিয়ে যাওয়া হচ্ছে, যাতে
+      // বাকি ব্যাচের (সফল হওয়া) ফলাফলও ব্যবহারকারী হারান না।
+      all.push(...fallbackSegments(batch));
+      fallbackUsed = true;
+      fallbackReason = err.message || String(err);
     }
-    return res.status(200).json({ provider, model, segments: all });
-  } catch (err) {
-    const status = err.status >= 400 && err.status < 600 ? err.status : 500;
-    return res.status(status).json({ error: err.message });
   }
+
+  return res.status(200).json({ provider, model, segments: all, fallbackUsed, fallbackReason });
 };
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// সব মডেল ব্যর্থ হলে প্রতিটা সেগমেন্টের জন্য একটা সাধারণ, নিরাপদ ডিফল্ট কোয়েরি —
+// যাতে ব্যবহারকারী পুরোপুরি খালি হাতে না থেকে অন্তত কিছু একটা ফলাফল (ও ম্যানুয়ালি এডিট করার সুযোগ) পান।
+function fallbackSegments(batch) {
+  return batch.map((s) => ({
+    id: s.id,
+    entity: "",
+    queries: ["cinematic b-roll footage", "abstract background motion", "generic lifestyle footage", "nature establishing shot"],
+    mediaType: "video",
+  }));
+}
