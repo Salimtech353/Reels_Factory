@@ -710,13 +710,10 @@ $("#analyzeBtn").addEventListener("click", async () => {
     renderSegments();
     markStepDone(3);
     markStepActive(4);
-    setMsg(
-      statusEl,
-      data.provider === "openrouter"
-        ? [{ key: "analyzeDone" }, { key: "viaOpenRouter", params: { model: data.model || "" } }]
-        : { key: "analyzeDone" },
-      "status-line ok"
-    );
+    const msgParts = [{ key: "analyzeDone" }];
+    if (data.provider === "openrouter") msgParts.push({ key: "viaOpenRouter", params: { model: data.model || "" } });
+    if (data.fallbackUsed) msgParts.push({ key: "fallbackUsedWarning" });
+    setMsg(statusEl, msgParts, data.fallbackUsed ? "status-line" : "status-line ok");
     $("#panelBuild").hidden = false;
 
     // auto-search top query for every segment
