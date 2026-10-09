@@ -4,7 +4,7 @@
 // শুধু Groq/OpenRouter/Pexels/Pixabay API প্রক্সি করার জন্য ব্যবহৃত হয়।
 // ============================================================
 
-import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261001";
+import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261009";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -33,7 +33,7 @@ applyI18n();
 
 // ---------- state ----------
 const state = {
-  keys: { groq: "", openrouter: "", pexels: "", pixabay: "", shotstack: "", geminiTranscribe: "" },
+  keys: { groq: "", openrouter: "", pexels: "", pixabay: "", shotstack: "", geminiTranscribe: "", geminiImage: "" },
   audioFile: null,
   segments: [], // {id, start, end, startSec, endSec, duration, text, query, entity, mediaType, media:{source,url,thumb,file}}
 };
@@ -50,6 +50,7 @@ function loadKeys() {
   $("#pixabayKey").value = state.keys.pixabay || "";
   $("#shotstackKey").value = state.keys.shotstack || "";
   $("#geminiTranscribeKey").value = state.keys.geminiTranscribe || "";
+  $("#geminiImageKey").value = state.keys.geminiImage || "";
 }
 function saveKeys() {
   state.keys.groq = $("#groqKey").value.trim();
@@ -58,6 +59,7 @@ function saveKeys() {
   state.keys.pixabay = $("#pixabayKey").value.trim();
   state.keys.shotstack = $("#shotstackKey").value.trim();
   state.keys.geminiTranscribe = $("#geminiTranscribeKey").value.trim();
+  state.keys.geminiImage = $("#geminiImageKey").value.trim();
   localStorage.setItem("rk_keys", JSON.stringify(state.keys));
   const el = $("#keysStatus");
   if (!(state.keys.groq || state.keys.openrouter) || !state.keys.pexels || !state.keys.shotstack) {
@@ -208,6 +210,7 @@ function renderSegments() {
             <button type="button" class="btn btn-secondary regen-btn">↻ ${t("regenQ")}</button>
             <button type="button" class="btn btn-secondary research-btn">🔍 ${t("researchBtn")}</button>
             <button type="button" class="btn btn-secondary upload-btn">⤒ ${t("uploadBtn")}</button>
+            <button type="button" class="btn btn-secondary ai-btn">✨ ${t("aiBtn")}</button>
           </div>
         </div>
       </div>${choices}`;
@@ -237,6 +240,7 @@ function renderSegments() {
       activeSeg = seg;
       $("#pickerUpload").click();
     });
+    row.querySelector(".ai-btn").addEventListener("click", (e) => generateAiImage(seg, e.currentTarget));
     row.querySelector(".segment-media").addEventListener("click", () => openPicker(seg));
     row.querySelectorAll(".choice").forEach((b) =>
       b.addEventListener("click", () => {
@@ -930,6 +934,109 @@ $("#pickerUpload").addEventListener("change", async (e) => {
   renderSegments();
   modal.hidden = true;
 });
+
+// ---------- AI ছবি তৈরি (Gemini) — শুধু "AI" বাটনে ক্লিক করলে চলে ----------
+// ফ্রি কোটা যে মডেলে পাওয়া যায় সেটা ধরতে ক্রমানুযায়ী চেষ্টা করা হয়; কোনোটা না চললে পরেরটায় যায়।
+const AI_IMG_MODELS = ["gemini-2.5-flash-image", "gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"];
+const AI_ASPECTS = { "16:9": "16:9", "9:16": "9:16", "1:1": "1:1" };
+const aiBusy = new Set();
+
+function buildAiPrompt(seg, aspect) {
+  const subject = (seg.query || "").trim() || (seg.text || "").trim();
+  const place = seg.entity ? ` Specific place/subject: ${seg.entity}.` : "";
+  const orient = aspect === "9:16" ? "vertical portrait" : aspect === "1:1" ? "square" : "horizontal landscape";
+  return (
+    `Create a realistic, high-quality, cinematic photograph for a video scene: ${subject}.${place} ` +
+    `Composition: ${orient} (${aspect}) frame, well lit, sharp focus. ` +
+    `Do NOT include any text, captions, letters, logos or watermarks in the image.` +
+    (seg.text && seg.query ? ` Narration context (Bangla, for meaning only): ${seg.text}` : "")
+  );
+}
+
+async function requestGeminiImage(prompt, aspect) {
+  let lastErr = null;
+  for (const model of AI_IMG_MODELS) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(state.keys.geminiImage)}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseModalities: ["TEXT", "IMAGE"],
+            imageConfig: { aspectRatio: AI_ASPECTS[aspect] || "16:9" },
+          },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data?.error?.message || `HTTP ${res.status}`;
+        const e = new Error(msg);
+        e.status = res.status;
+        // ভুল/অচল চাবি হলে অন্য মডেলে চেষ্টা করে লাভ নেই
+        if (/API key not valid|API_KEY_INVALID/i.test(msg)) {
+          e.fatal = true;
+          throw e;
+        }
+        throw e;
+      }
+      const parts = data?.candidates?.[0]?.content?.parts || [];
+      const img = parts.find((p) => (p.inlineData || p.inline_data) && (p.inlineData || p.inline_data).data);
+      if (!img) throw new Error(t("aiNoImage"));
+      const d = img.inlineData || img.inline_data;
+      return { b64: d.data, mime: d.mimeType || d.mime_type || "image/png" };
+    } catch (err) {
+      lastErr = err;
+      if (err.fatal) break;
+    }
+  }
+  throw lastErr || new Error(t("aiFailedGeneric"));
+}
+
+function b64ToFile(b64, mime, name) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], name, { type: mime });
+}
+
+async function generateAiImage(seg, btn) {
+  if (!state.keys.geminiImage) {
+    toast(t("aiNoKey"), "err");
+    openSettings();
+    return;
+  }
+  if (aiBusy.has(seg.id)) return;
+  if (!((seg.query || "").trim() || (seg.text || "").trim())) {
+    toast(t("aiNoQuery"), "err");
+    return;
+  }
+  aiBusy.add(seg.id);
+  const oldLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "⏳ " + t("aiGenerating");
+  try {
+    const aspect = $("#aspectSelect").value || "9:16";
+    const { b64, mime } = await requestGeminiImage(buildAiPrompt(seg, aspect), aspect);
+    const ext = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
+    const file = b64ToFile(b64, mime, `ai-scene-${seg.id}.${ext}`);
+    const url = URL.createObjectURL(file);
+    // আপলোড করা ছবির মতোই বসানো হয় — তাই বিল্ড/রেন্ডার অংশে কোনো পরিবর্তন লাগে না
+    seg.media = { source: "upload", type: "photo", file, url, thumb: url, duration: null };
+    renderSegments();
+    toast(t("aiDone"));
+  } catch (err) {
+    const hint = err.status === 429 ? " — " + t("aiQuotaHint") : "";
+    toast(t("errPrefix", { msg: (err.message || "") + hint }), "err");
+    if (btn.isConnected) {
+      btn.disabled = false;
+      btn.textContent = oldLabel;
+    }
+  } finally {
+    aiBusy.delete(seg.id);
+  }
+}
 
 // ---------- build availability ----------
 function refreshBuildAvailability() {
