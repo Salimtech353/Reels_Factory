@@ -33,7 +33,7 @@ applyI18n();
 
 // ---------- state ----------
 const state = {
-  keys: { groq: "", openrouter: "", pexels: "", pixabay: "", shotstack: "", geminiTranscribe: "", geminiImage: "" },
+  keys: { groq: "", openrouter: "", pexels: "", pixabay: "", shotstack: "", geminiTranscribe: "", pollinations: "", pollModel: "" },
   audioFile: null,
   segments: [], // {id, start, end, startSec, endSec, duration, text, query, entity, mediaType, media:{source,url,thumb,file}}
 };
@@ -50,7 +50,8 @@ function loadKeys() {
   $("#pixabayKey").value = state.keys.pixabay || "";
   $("#shotstackKey").value = state.keys.shotstack || "";
   $("#geminiTranscribeKey").value = state.keys.geminiTranscribe || "";
-  $("#geminiImageKey").value = state.keys.geminiImage || "";
+  $("#pollinationsKey").value = state.keys.pollinations || "";
+  $("#pollinationsModel").value = state.keys.pollModel || "";
 }
 function saveKeys() {
   state.keys.groq = $("#groqKey").value.trim();
@@ -59,7 +60,8 @@ function saveKeys() {
   state.keys.pixabay = $("#pixabayKey").value.trim();
   state.keys.shotstack = $("#shotstackKey").value.trim();
   state.keys.geminiTranscribe = $("#geminiTranscribeKey").value.trim();
-  state.keys.geminiImage = $("#geminiImageKey").value.trim();
+  state.keys.pollinations = $("#pollinationsKey").value.trim();
+  state.keys.pollModel = $("#pollinationsModel").value.trim();
   localStorage.setItem("rk_keys", JSON.stringify(state.keys));
   const el = $("#keysStatus");
   if (!(state.keys.groq || state.keys.openrouter) || !state.keys.pexels || !state.keys.shotstack) {
@@ -935,78 +937,66 @@ $("#pickerUpload").addEventListener("change", async (e) => {
   modal.hidden = true;
 });
 
-// ---------- AI ছবি তৈরি (Gemini) — শুধু "AI" বাটনে ক্লিক করলে চলে ----------
-// ফ্রি কোটা যে মডেলে পাওয়া যায় সেটা ধরতে ক্রমানুযায়ী চেষ্টা করা হয়; কোনোটা না চললে পরেরটায় যায়।
-const AI_IMG_MODELS = ["gemini-2.5-flash-image", "gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"];
-const AI_ASPECTS = { "16:9": "16:9", "9:16": "9:16", "1:1": "1:1" };
+// ---------- AI ছবি তৈরি (Pollinations.ai) — শুধু "AI" বাটনে ক্লিক করলে চলে ----------
+// ফ্রি মডেল যেটা আপনার অ্যাকাউন্টে চলে সেটা ধরতে ক্রমানুযায়ী চেষ্টা করা হয়। Settings-এ নিজের মডেল-নাম দিলে সেটা আগে চেষ্টা হবে।
+const POLL_BASE = "https://gen.pollinations.ai/image/";
+const POLL_MODELS = ["flux", "black-forest-labs/flux.1-schnell", "tongyi-mai/z-image-turbo", "lykon/dreamshaper-8-lcm"];
+const POLL_SIZES = { "16:9": [1280, 720], "9:16": [720, 1280], "1:1": [1024, 1024] };
 const aiBusy = new Set();
 
 function buildAiPrompt(seg, aspect) {
   const subject = (seg.query || "").trim() || (seg.text || "").trim();
   const place = seg.entity ? ` Specific place/subject: ${seg.entity}.` : "";
   const orient = aspect === "9:16" ? "vertical portrait" : aspect === "1:1" ? "square" : "horizontal landscape";
-  return (
-    `Create a realistic, high-quality, cinematic photograph for a video scene: ${subject}.${place} ` +
-    `Composition: ${orient} (${aspect}) frame, well lit, sharp focus. ` +
-    `Do NOT include any text, captions, letters, logos or watermarks in the image.` +
-    (seg.text && seg.query ? ` Narration context (Bangla, for meaning only): ${seg.text}` : "")
-  );
+  const p =
+    `Realistic high-quality cinematic photograph for a video scene: ${subject}.${place} ` +
+    `${orient} composition, well lit, sharp focus. No text, captions, letters, logos or watermarks.`;
+  return p.slice(0, 900); // GET URL-এ যায়, তাই ছোট রাখা হচ্ছে
 }
 
-async function requestGeminiImage(prompt, aspect) {
+async function pollFetch(url, key) {
+  // প্রথমে Authorization হেডারে চাবি; ব্রাউজার ব্লক করলে (network/CORS) ?key= দিয়ে আবার চেষ্টা
+  const headers = key ? { Authorization: `Bearer ${key}` } : {};
+  try {
+    return await fetch(url, { headers });
+  } catch (e) {
+    if (!key) throw e;
+    return await fetch(url + (url.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(key));
+  }
+}
+
+async function requestPollinationsImage(prompt, aspect) {
+  const [w, h] = POLL_SIZES[aspect] || POLL_SIZES["16:9"];
+  const key = state.keys.pollinations || "";
+  const custom = (state.keys.pollModel || "").trim();
+  const models = custom ? [custom, ...POLL_MODELS.filter((m) => m !== custom)] : POLL_MODELS;
   let lastErr = null;
-  for (const model of AI_IMG_MODELS) {
+  for (const model of models) {
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(state.keys.geminiImage)}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseModalities: ["TEXT", "IMAGE"],
-            imageConfig: { aspectRatio: AI_ASPECTS[aspect] || "16:9" },
-          },
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
+      const url = `${POLL_BASE}${encodeURIComponent(prompt)}?model=${encodeURIComponent(model)}&width=${w}&height=${h}&nologo=true&seed=${Math.floor(Math.random() * 1e9)}`;
+      const res = await pollFetch(url, key);
       if (!res.ok) {
-        const msg = data?.error?.message || `HTTP ${res.status}`;
+        let msg = `HTTP ${res.status}`;
+        try {
+          const j = await res.clone().json();
+          msg = j?.error?.message || j?.message || (typeof j?.error === "string" ? j.error : "") || msg;
+        } catch (_) {}
         const e = new Error(msg);
         e.status = res.status;
-        // ভুল/অচল চাবি হলে অন্য মডেলে চেষ্টা করে লাভ নেই
-        if (/API key not valid|API_KEY_INVALID/i.test(msg)) {
-          e.fatal = true;
-          throw e;
-        }
         throw e;
       }
-      const parts = data?.candidates?.[0]?.content?.parts || [];
-      const img = parts.find((p) => (p.inlineData || p.inline_data) && (p.inlineData || p.inline_data).data);
-      if (!img) throw new Error(t("aiNoImage"));
-      const d = img.inlineData || img.inline_data;
-      return { b64: d.data, mime: d.mimeType || d.mime_type || "image/png" };
+      const blob = await res.blob();
+      if (!blob.type.startsWith("image/")) throw new Error(t("aiNoImage"));
+      return blob;
     } catch (err) {
       lastErr = err;
-      if (err.fatal) break;
+      if (err.status === 401) break; // চাবি ছাড়া/ভুল চাবি — অন্য মডেলে চেষ্টা করে লাভ নেই
     }
   }
   throw lastErr || new Error(t("aiFailedGeneric"));
 }
 
-function b64ToFile(b64, mime, name) {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new File([bytes], name, { type: mime });
-}
-
 async function generateAiImage(seg, btn) {
-  if (!state.keys.geminiImage) {
-    toast(t("aiNoKey"), "err");
-    openSettings();
-    return;
-  }
   if (aiBusy.has(seg.id)) return;
   if (!((seg.query || "").trim() || (seg.text || "").trim())) {
     toast(t("aiNoQuery"), "err");
@@ -1018,16 +1008,17 @@ async function generateAiImage(seg, btn) {
   btn.textContent = "⏳ " + t("aiGenerating");
   try {
     const aspect = $("#aspectSelect").value || "9:16";
-    const { b64, mime } = await requestGeminiImage(buildAiPrompt(seg, aspect), aspect);
-    const ext = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
-    const file = b64ToFile(b64, mime, `ai-scene-${seg.id}.${ext}`);
+    const blob = await requestPollinationsImage(buildAiPrompt(seg, aspect), aspect);
+    const mime = blob.type || "image/jpeg";
+    const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+    const file = new File([blob], `ai-scene-${seg.id}.${ext}`, { type: mime });
     const url = URL.createObjectURL(file);
     // আপলোড করা ছবির মতোই বসানো হয় — তাই বিল্ড/রেন্ডার অংশে কোনো পরিবর্তন লাগে না
     seg.media = { source: "upload", type: "photo", file, url, thumb: url, duration: null };
     renderSegments();
     toast(t("aiDone"));
   } catch (err) {
-    const hint = err.status === 429 ? " — " + t("aiQuotaHint") : "";
+    const hint = err.status === 401 || err.status === 402 ? " — " + t("aiKeyHint") : err.status === 429 ? " — " + t("aiQuotaHint") : "";
     toast(t("errPrefix", { msg: (err.message || "") + hint }), "err");
     if (btn.isConnected) {
       btn.disabled = false;
