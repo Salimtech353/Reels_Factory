@@ -4,7 +4,7 @@
 // শুধু Groq/OpenRouter/Pexels/Pixabay API প্রক্সি করার জন্য ব্যবহৃত হয়।
 // ============================================================
 
-import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261011";
+import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261012";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -1470,7 +1470,8 @@ function buildRenderJob(resolutionKey, aspectRatio, captionsEnabled, borderPerce
     };
   }
   return {
-    version: 1,
+    version: 2,
+    transitions: TRANSITION_STYLES.slice(),
     W: dim.w,
     H: dim.h,
     cw,
@@ -1561,8 +1562,27 @@ async function buildViaGithub(buildBtn) {
       await sleep(5000);
       const cur = await ghFetch(`/repos/${repo}/actions/runs/${run.id}`);
       const secs = Math.round((Date.now() - started) / 1000);
-      const pct = 55 + 40 * (1 - Math.exp(-secs / 240)); // আসল প্রগ্রেস জানা যায় না, তাই আনুমানিক
-      setProgress(pct, { key: "ghRender", params: { time: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}` } });
+      const time = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+      // রেন্ডারার প্রতি কয়েক সেকেন্ডে jobs/<id>/progress.json আপডেট করে — পেলে আসল প্রগ্রেস দেখানো হয়
+      let prog = null;
+      try {
+        const pr = await fetch(`${GH_API}/repos/${repo}/contents/${base}/progress.json?ref=main&_=${Date.now()}`, {
+          cache: "no-store",
+          headers: {
+            Accept: "application/vnd.github.raw+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            Authorization: `Bearer ${state.keys.ghToken}`,
+          },
+        });
+        if (pr.ok) prog = await pr.json();
+      } catch (_) {}
+      if (prog && typeof prog.pct === "number") {
+        const stageKey = { scenes: "ghStScenes", transitions: "ghStTrans", final: "ghStFinal" }[prog.stage] || "ghRender";
+        setProgress(55 + 42 * (Math.min(100, prog.pct) / 100), { key: stageKey, params: { i: prog.i, n: prog.n, time } });
+      } else {
+        const pct = 55 + 15 * (1 - Math.exp(-secs / 120)); // আসল প্রগ্রেস আসার আগে আনুমানিক
+        setProgress(pct, { key: "ghRender", params: { time } });
+      }
       if (cur.status === "completed") {
         finalRun = cur;
         break;
