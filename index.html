@@ -127,6 +127,13 @@
           <div><small data-i18n="sumScenes"></small><b id="sumScenes">–</b></div>
           <div><small data-i18n="sumRes"></small><b id="sumRes">–</b></div>
         </div>
+        <div class="field">
+          <span data-i18n="renderMethodLabel"></span>
+          <select id="renderMethod">
+            <option value="shotstack" data-i18n="renderShot"></option>
+            <option value="github" data-i18n="renderGh"></option>
+          </select>
+        </div>
         <details class="adv">
           <summary data-i18n="adv"></summary>
           <div class="adv-body">
@@ -289,6 +296,17 @@
       </label>
 
       <label class="field">
+        <span><span data-i18n="ghLabel"></span> <em data-i18n="pixabayOpt"></em> <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener" data-i18n="getKey"></a></span>
+        <input type="password" id="ghToken" placeholder="github_pat_..." autocomplete="off" />
+      </label>
+      <p class="hint" style="margin-top:-10px;" data-i18n="ghHint"></p>
+
+      <label class="field">
+        <span data-i18n="ghRepoLabel"></span>
+        <input type="text" id="ghRepo" placeholder="Salimtech353/Video_Rendering" autocomplete="off" />
+      </label>
+
+      <label class="field">
         <span><span>Pexels API Key</span> <a href="https://www.pexels.com/api/" target="_blank" rel="noopener" data-i18n="getKey"></a></span>
         <input type="password" id="pexelsKey" placeholder="563492ad..." autocomplete="off" />
       </label>
@@ -340,6 +358,6 @@
 </div>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
-<script type="module" src="app.js?v=20261009"></script>
+<script type="module" src="app.js?v=20261011"></script>
 </body>
 </html>

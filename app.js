@@ -4,7 +4,7 @@
 // শুধু Groq/OpenRouter/Pexels/Pixabay API প্রক্সি করার জন্য ব্যবহৃত হয়।
 // ============================================================
 
-import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261009";
+import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261011";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -33,7 +33,7 @@ applyI18n();
 
 // ---------- state ----------
 const state = {
-  keys: { groq: "", openrouter: "", pexels: "", pixabay: "", shotstack: "", geminiTranscribe: "", pollinations: "", pollModel: "" },
+  keys: { groq: "", openrouter: "", pexels: "", pixabay: "", shotstack: "", geminiTranscribe: "", pollinations: "", pollModel: "", ghToken: "", ghRepo: "" },
   audioFile: null,
   segments: [], // {id, start, end, startSec, endSec, duration, text, query, entity, mediaType, media:{source,url,thumb,file}}
 };
@@ -52,6 +52,8 @@ function loadKeys() {
   $("#geminiTranscribeKey").value = state.keys.geminiTranscribe || "";
   $("#pollinationsKey").value = state.keys.pollinations || "";
   $("#pollinationsModel").value = state.keys.pollModel || "";
+  $("#ghToken").value = state.keys.ghToken || "";
+  $("#ghRepo").value = state.keys.ghRepo || "";
 }
 function saveKeys() {
   state.keys.groq = $("#groqKey").value.trim();
@@ -62,6 +64,8 @@ function saveKeys() {
   state.keys.geminiTranscribe = $("#geminiTranscribeKey").value.trim();
   state.keys.pollinations = $("#pollinationsKey").value.trim();
   state.keys.pollModel = $("#pollinationsModel").value.trim();
+  state.keys.ghToken = $("#ghToken").value.trim();
+  state.keys.ghRepo = $("#ghRepo").value.trim();
   localStorage.setItem("rk_keys", JSON.stringify(state.keys));
   const el = $("#keysStatus");
   if (!(state.keys.groq || state.keys.openrouter) || !state.keys.pexels || !state.keys.shotstack) {
@@ -1280,6 +1284,12 @@ $("#buildBtn").addEventListener("click", async () => {
   buildBtn.disabled = true;
   markStepActive(5);
 
+  // বিকল্প মেথড: GitHub Actions + FFmpeg (Shotstack পথ নিচে অপরিবর্তিত)
+  if ($("#renderMethod").value === "github") {
+    await buildViaGithub(buildBtn);
+    return;
+  }
+
   if (!state.keys.shotstack) {
     setProgress(0, { key: "needShotstack" });
     buildBtn.disabled = false;
@@ -1346,6 +1356,236 @@ $("#buildBtn").addEventListener("click", async () => {
     buildBtn.disabled = false;
   }
 });
+
+// ============================================================
+// GitHub Actions + FFmpeg — বিকল্প রেন্ডার মেথড
+// অ্যাপ জবের ফাইল রিপোতে পাঠায় → workflow চালু করে → GitHub-এ FFmpeg রেন্ডার করে
+// → ফলাফল Release হিসেবে ফেরত আসে। পিসি চালু রাখতে হয় না।
+// ============================================================
+const RM_KEY = "rk_render_method";
+(function initRenderMethod() {
+  const sel = $("#renderMethod");
+  try {
+    sel.value = localStorage.getItem(RM_KEY) || "shotstack";
+  } catch (_) {}
+  if (!sel.value) sel.value = "shotstack";
+  sel.addEventListener("change", () => {
+    try {
+      localStorage.setItem(RM_KEY, sel.value);
+    } catch (_) {}
+  });
+})();
+
+const GH_API = "https://api.github.com";
+function ghRepoName() {
+  return (state.keys.ghRepo || "")
+    .trim()
+    .replace(/^https?:\/\/github\.com\//, "")
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "");
+}
+
+async function ghFetch(pathname, opts = {}) {
+  const res = await fetch(GH_API + pathname, {
+    ...opts,
+    headers: {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      Authorization: `Bearer ${state.keys.ghToken}`,
+      ...(opts.body ? { "Content-Type": "application/json" } : {}),
+    },
+  });
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const e = new Error("GitHub: " + (data.message || `HTTP ${res.status}`));
+    e.status = res.status;
+    throw e;
+  }
+  return data;
+}
+
+function textToBase64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+async function ghPutFile(repo, filePath, base64, message) {
+  const enc = filePath.split("/").map(encodeURIComponent).join("/");
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await ghFetch(`/repos/${repo}/contents/${enc}`, {
+        method: "PUT",
+        body: JSON.stringify({ message, content: base64, branch: "main" }),
+      });
+    } catch (e) {
+      if ((e.status === 409 || e.status === 422) && attempt < 4) {
+        await sleep(1000 * attempt);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+// Shotstack টাইমলাইনের মতো একই জ্যামিতি ও ক্যাপশন-ভাগ, কিন্তু FFmpeg রেন্ডারারের জন্য সরল JSON
+function buildRenderJob(resolutionKey, aspectRatio, captionsEnabled, borderPercent, opts) {
+  const dim = (RES_DIMENSIONS[aspectRatio] || RES_DIMENSIONS["9:16"])[resolutionKey] || RES_DIMENSIONS["9:16"].sd;
+  const m = Math.max(0, Math.min(0.25, (borderPercent || 0) / 100));
+  const even = (v) => Math.max(2, Math.round(v / 2) * 2);
+  const cw = even(dim.w * (1 - 2 * m));
+  const ch = even(dim.h * (1 - 2 * m));
+
+  let captions = { enabled: false };
+  if (captionsEnabled) {
+    const rawSize = Math.max(8, Math.min(18, Number(opts.size) || 13));
+    const fontSize = Math.round(Math.min(cw, ch) / (26 - rawSize));
+    const boxWidth = Math.round(cw * 0.92);
+    const paddingPx = Math.max(4, fontSize * 0.25);
+    const bottomY = (dim.h + ch) / 2 - paddingPx; // ফুটেজের নিচের ধার থেকে সামান্য ওপরে
+    const lines = [];
+    state.segments.forEach((seg) => {
+      const segLines = wrapCaptionLines(seg.text, fontSize, boxWidth);
+      const totalChars = segLines.reduce((sum, l) => sum + l.length, 0) || 1;
+      const segEnd = seg.startSec + seg.duration;
+      let cursor = seg.startSec;
+      segLines.forEach((lineText, idx) => {
+        const isLast = idx === segLines.length - 1;
+        const len = isLast ? segEnd - cursor : (seg.duration * lineText.length) / totalChars;
+        lines.push({ text: lineText, start: Number(cursor.toFixed(3)), length: Number(len.toFixed(3)) });
+        cursor += len;
+      });
+    });
+    const f = captionFontOf(opts);
+    captions = {
+      enabled: true,
+      size: fontSize,
+      color: opts.color || "#ffffff",
+      anim: opts.animation || "typewriter",
+      bottomY,
+      lines,
+      font: { url: f.url, name: String(f.css || "").replace(/'/g, ""), bold: f.weight >= 700 },
+    };
+  }
+  return {
+    version: 1,
+    W: dim.w,
+    H: dim.h,
+    cw,
+    ch,
+    borderColor: BORDER_COLOR,
+    total: Math.max(...state.segments.map((s) => s.endSec)),
+    captions,
+    segments: [],
+    audio: {},
+  };
+}
+
+function extOf(file, fallback) {
+  const m = /\.([A-Za-z0-9]{2,5})$/.exec(file.name || "");
+  if (m) return m[1].toLowerCase();
+  const t2 = (file.type || "").split("/")[1];
+  return (t2 || fallback).replace(/[^a-z0-9]/gi, "").slice(0, 5) || fallback;
+}
+
+async function buildViaGithub(buildBtn) {
+  const repo = ghRepoName();
+  if (!state.keys.ghToken || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+    setProgress(0, { key: "needGithub" });
+    buildBtn.disabled = false;
+    return;
+  }
+  try {
+    const jobId = "j" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const base = `jobs/${jobId}`;
+    const resolutionKey = RES_MAP[$("#resSelect").value] || "sd";
+    const aspectRatio = $("#aspectSelect").value || "9:16";
+    const job = buildRenderJob(resolutionKey, aspectRatio, $("#captionToggle").checked, Number($("#borderSelect").value) || 0, {
+      size: $("#captionSizeSelect").value,
+      color: $("#captionColorSelect").value,
+      animation: $("#captionAnimSelect").value,
+      font: $("#captionFontSelect").value,
+    });
+
+    // কোন ফাইলগুলো রিপোতে পাঠাতে হবে (আপলোড/AI ছবি ও নিজের অডিও); স্টক মিডিয়া শুধু লিংক হিসেবে যায়
+    const uploads = [];
+    if (state.audioFile) {
+      const name = `audio.${extOf(state.audioFile, "mp3")}`;
+      uploads.push({ name, file: state.audioFile });
+      job.audio = { file: name, volume: 1 };
+    } else {
+      job.audio = { url: DEFAULT_BG_MUSIC.url, bg: true, volume: DEFAULT_BG_MUSIC.volume };
+    }
+    state.segments.forEach((seg, i) => {
+      const media = { type: seg.media.type };
+      if (seg.media.source === "upload") {
+        const name = `m${i}.${extOf(seg.media.file, seg.media.type === "photo" ? "jpg" : "mp4")}`;
+        uploads.push({ name, file: seg.media.file });
+        media.file = name;
+      } else {
+        media.url = seg.media.url;
+      }
+      job.segments.push({ start: seg.startSec, duration: seg.duration, media });
+    });
+
+    for (let k = 0; k < uploads.length; k++) {
+      const u = uploads[k];
+      if (u.file.size > 60 * 1024 * 1024) throw new Error(t("ghTooBig"));
+      setProgress(3 + Math.round((k / uploads.length) * 37), { key: "ghUpload", params: { i: k + 1, n: uploads.length } });
+      await ghPutFile(repo, `${base}/${u.name}`, await fileToBase64(u.file), `job ${jobId}: ${u.name}`);
+    }
+    setProgress(42, { key: "ghUpload", params: { i: uploads.length, n: uploads.length } });
+    await ghPutFile(repo, `${base}/job.json`, textToBase64(JSON.stringify(job)), `job ${jobId}: job.json`);
+
+    setProgress(46, { key: "ghSend" });
+    await ghFetch(`/repos/${repo}/actions/workflows/render.yml/dispatches`, {
+      method: "POST",
+      body: JSON.stringify({ ref: "main", inputs: { job: jobId } }),
+    });
+
+    // workflow_dispatch রান আইডি ফেরত দেয় না — run-name-এ জব আইডি থাকে, সেটা দিয়ে খুঁজে নেওয়া হয়
+    let run = null;
+    for (let i = 0; i < 40 && !run; i++) {
+      await sleep(3000);
+      const r = await ghFetch(`/repos/${repo}/actions/workflows/render.yml/runs?event=workflow_dispatch&per_page=15`);
+      run = (r.workflow_runs || []).find((x) => String(x.display_title || x.name || "").includes(jobId)) || null;
+      setProgress(46 + Math.min(6, i), { key: "ghQueue" });
+    }
+    if (!run) throw new Error(t("ghNoRun"));
+
+    const started = Date.now();
+    let finalRun = null;
+    while (Date.now() - started < 50 * 60 * 1000) {
+      await sleep(5000);
+      const cur = await ghFetch(`/repos/${repo}/actions/runs/${run.id}`);
+      const secs = Math.round((Date.now() - started) / 1000);
+      const pct = 55 + 40 * (1 - Math.exp(-secs / 240)); // আসল প্রগ্রেস জানা যায় না, তাই আনুমানিক
+      setProgress(pct, { key: "ghRender", params: { time: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}` } });
+      if (cur.status === "completed") {
+        finalRun = cur;
+        break;
+      }
+    }
+    if (!finalRun) throw new Error(t("renderTimeout"));
+    if (finalRun.conclusion !== "success") throw new Error(t("ghFailed", { url: finalRun.html_url }));
+
+    const finalUrl = `https://github.com/${repo}/releases/download/render-${jobId}/video.mp4`;
+    $("#resultVideo").src = finalUrl;
+    $("#downloadBtn").href = finalUrl;
+    $("#resultBox").hidden = false;
+    setProgress(100, { key: "renderDone" });
+    toast(t("renderDone"));
+    markStepDone(5);
+    saveRecentRender(finalUrl);
+  } catch (err) {
+    console.error(err);
+    setProgress(0, { key: "errPrefix", params: { msg: err.message } });
+  } finally {
+    buildBtn.disabled = false;
+  }
+}
 
 // ---------- recent renders list ----------
 const RECENT_KEY = "rk_recent_renders";
