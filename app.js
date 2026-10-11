@@ -4,7 +4,7 @@
 // শুধু Groq/OpenRouter/Pexels/Pixabay API প্রক্সি করার জন্য ব্যবহৃত হয়।
 // ============================================================
 
-import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261012";
+import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261013";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -1430,8 +1430,62 @@ async function ghPutFile(repo, filePath, base64, message) {
   }
 }
 
-// Shotstack টাইমলাইনের মতো একই জ্যামিতি ও ক্যাপশন-ভাগ, কিন্তু FFmpeg রেন্ডারারের জন্য সরল JSON
-function buildRenderJob(resolutionKey, aspectRatio, captionsEnabled, borderPercent, opts) {
+// ক্যাপশনের মাপ ব্রাউজারেই আসল ফন্ট দিয়ে মাপা হয় (একই শেপিং/প্রস্থ), যাতে রেন্ডারে ঠিক সেভাবেই বসে
+const _capFontCache = {};
+function loadCaptionMeasureFont(f) {
+  const family = "RFcap" + String(f.css || "").replace(/[^A-Za-z0-9]/g, "");
+  if (!_capFontCache[family]) {
+    _capFontCache[family] = (async () => {
+      try {
+        const face = new FontFace(family, `url(${f.url})`);
+        await face.load();
+        document.fonts.add(face);
+        return family;
+      } catch (_) {
+        return null; // ফন্ট না পেলে সাধারণ ফন্টে আনুমানিক মাপ
+      }
+    })();
+  }
+  return _capFontCache[family];
+}
+
+// একটা দৃশ্যের পুরো ক্যাপশন একসাথে: এক লাইনে আঁটলে এক লাইন, নইলে সবচেয়ে সুষম দুই লাইন।
+// তাতেও না আঁটলে ফন্ট এক এক পিক্সেল ছোট করা হয় (সর্বনিম্ন সীমা পর্যন্ত)।
+function fitCaption(text, baseSize, boxWidth, measure100) {
+  const clean = String(text || "").trim().replace(/\s+/g, " ");
+  if (!clean) return null;
+  const words = clean.split(" ");
+  const minSize = Math.max(11, Math.round(baseSize * 0.4));
+  const wAll = measure100(clean);
+  let bestSplit = null; // সবচেয়ে সুষম দুই-লাইন ভাগ
+  for (let i = 1; i < words.length; i++) {
+    const l1 = words.slice(0, i).join(" ");
+    const l2 = words.slice(i).join(" ");
+    const mx = Math.max(measure100(l1), measure100(l2));
+    if (!bestSplit || mx < bestSplit.mx) bestSplit = { mx, lines: [l1, l2] };
+  }
+  for (let sz = baseSize; sz >= minSize; sz--) {
+    const k = sz / 100;
+    if (wAll * k <= boxWidth) return { size: sz, lines: [clean] };
+    if (bestSplit && bestSplit.mx * k <= boxWidth) return { size: sz, lines: bestSplit.lines };
+  }
+  // সর্বনিম্ন মাপেও দুই লাইনে না আঁটলে (খুব লম্বা লেখা) বাধ্য হয়ে বেশি লাইন
+  const k = minSize / 100;
+  const lines = [];
+  let cur = "";
+  for (const w of words) {
+    const cand = cur ? `${cur} ${w}` : w;
+    if (cur && measure100(cand) * k > boxWidth) {
+      lines.push(cur);
+      cur = w;
+    } else cur = cand;
+  }
+  if (cur) lines.push(cur);
+  return { size: minSize, lines };
+}
+
+// Shotstack টাইমলাইনের মতো একই জ্যামিতি, কিন্তু ক্যাপশন FFmpeg রেন্ডারারের জন্য আলাদাভাবে সাজানো
+async function buildRenderJob(resolutionKey, aspectRatio, captionsEnabled, borderPercent, opts) {
   const dim = (RES_DIMENSIONS[aspectRatio] || RES_DIMENSIONS["9:16"])[resolutionKey] || RES_DIMENSIONS["9:16"].sd;
   const m = Math.max(0, Math.min(0.25, (borderPercent || 0) / 100));
   const even = (v) => Math.max(2, Math.round(v / 2) * 2);
@@ -1441,27 +1495,24 @@ function buildRenderJob(resolutionKey, aspectRatio, captionsEnabled, borderPerce
   let captions = { enabled: false };
   if (captionsEnabled) {
     const rawSize = Math.max(8, Math.min(18, Number(opts.size) || 13));
-    const fontSize = Math.round(Math.min(cw, ch) / (26 - rawSize));
-    const boxWidth = Math.round(cw * 0.92);
-    const paddingPx = Math.max(4, fontSize * 0.25);
-    const bottomY = (dim.h + ch) / 2 - paddingPx; // ফুটেজের নিচের ধার থেকে সামান্য ওপরে
+    const baseSize = Math.round(Math.min(cw, ch) / (26 - rawSize));
+    const boxWidth = Math.round(cw * 0.94);
+    const paddingPx = Math.max(6, baseSize * 0.3);
+    const bottomY = (dim.h + ch) / 2 - paddingPx; // ফুটেজের একদম নিচে, সামান্য ওপরে
+    const f = captionFontOf(opts);
+    const family = await loadCaptionMeasureFont(f);
+    const ctx = document.createElement("canvas").getContext("2d");
+    ctx.font = `${f.weight >= 700 ? "bold " : ""}100px ${family ? `"${family}"` : `"${String(f.css || "").replace(/'/g, "")}", "Noto Sans Bengali", sans-serif`}`;
+    const measure100 = (str) => ctx.measureText(str).width;
     const lines = [];
     state.segments.forEach((seg) => {
-      const segLines = wrapCaptionLines(seg.text, fontSize, boxWidth);
-      const totalChars = segLines.reduce((sum, l) => sum + l.length, 0) || 1;
-      const segEnd = seg.startSec + seg.duration;
-      let cursor = seg.startSec;
-      segLines.forEach((lineText, idx) => {
-        const isLast = idx === segLines.length - 1;
-        const len = isLast ? segEnd - cursor : (seg.duration * lineText.length) / totalChars;
-        lines.push({ text: lineText, start: Number(cursor.toFixed(3)), length: Number(len.toFixed(3)) });
-        cursor += len;
-      });
+      const fit = fitCaption(seg.text, baseSize, boxWidth, measure100);
+      if (!fit) return;
+      lines.push({ text: fit.lines.join("\n"), size: fit.size, start: Number(seg.startSec.toFixed(3)), length: Number(seg.duration.toFixed(3)) });
     });
-    const f = captionFontOf(opts);
     captions = {
       enabled: true,
-      size: fontSize,
+      size: baseSize,
       color: opts.color || "#ffffff",
       anim: opts.animation || "typewriter",
       bottomY,
@@ -1503,7 +1554,7 @@ async function buildViaGithub(buildBtn) {
     const base = `jobs/${jobId}`;
     const resolutionKey = RES_MAP[$("#resSelect").value] || "sd";
     const aspectRatio = $("#aspectSelect").value || "9:16";
-    const job = buildRenderJob(resolutionKey, aspectRatio, $("#captionToggle").checked, Number($("#borderSelect").value) || 0, {
+    const job = await buildRenderJob(resolutionKey, aspectRatio, $("#captionToggle").checked, Number($("#borderSelect").value) || 0, {
       size: $("#captionSizeSelect").value,
       color: $("#captionColorSelect").value,
       animation: $("#captionAnimSelect").value,
