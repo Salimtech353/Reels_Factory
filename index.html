@@ -134,6 +134,19 @@
             <option value="github" data-i18n="renderGh"></option>
           </select>
         </div>
+        <div class="field" id="musicBox" style="display:none;">
+          <span data-i18n="musicLabel"></span>
+          <input type="file" id="bgMusicFile" accept="audio/*" />
+          <small class="hint" data-i18n="musicHint"></small>
+          <label style="display:block;margin-top:8px;">
+            <span><span data-i18n="musicNormal"></span>: <b id="musicVolOut">40%</b></span>
+            <input type="range" id="musicVol" min="5" max="100" value="40" style="width:100%;" />
+          </label>
+          <label style="display:block;margin-top:6px;">
+            <span><span data-i18n="musicDuck"></span>: <b id="musicDuckOut">14%</b></span>
+            <input type="range" id="musicDuckVol" min="0" max="60" value="14" style="width:100%;" />
+          </label>
+        </div>
         <details class="adv">
           <summary data-i18n="adv"></summary>
           <div class="adv-body">

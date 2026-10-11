@@ -4,7 +4,7 @@
 // শুধু Groq/OpenRouter/Pexels/Pixabay API প্রক্সি করার জন্য ব্যবহৃত হয়।
 // ============================================================
 
-import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261013";
+import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261014";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -35,6 +35,7 @@ applyI18n();
 const state = {
   keys: { groq: "", openrouter: "", pexels: "", pixabay: "", shotstack: "", geminiTranscribe: "", pollinations: "", pollModel: "", ghToken: "", ghRepo: "" },
   audioFile: null,
+  bgMusicFile: null,
   segments: [], // {id, start, end, startSec, endSec, duration, text, query, entity, mediaType, media:{source,url,thumb,file}}
 };
 
@@ -1376,6 +1377,41 @@ const RM_KEY = "rk_render_method";
   });
 })();
 
+// ব্যাকগ্রাউন্ড মিউজিক + ducking (শুধু GitHub মেথডে)
+const MUSIC_DEFAULTS = { vol: 40, duck: 14 };
+(function initMusicControls() {
+  const sel = $("#renderMethod");
+  const box = $("#musicBox");
+  const vol = $("#musicVol");
+  const duck = $("#musicDuckVol");
+  const show = () => {
+    box.style.display = sel.value === "github" ? "" : "none";
+  };
+  const label = () => {
+    $("#musicVolOut").textContent = vol.value + "%";
+    $("#musicDuckOut").textContent = duck.value + "%";
+  };
+  try {
+    vol.value = localStorage.getItem("rk_music_vol") || MUSIC_DEFAULTS.vol;
+    duck.value = localStorage.getItem("rk_music_duck") || MUSIC_DEFAULTS.duck;
+  } catch (_) {}
+  [vol, duck].forEach((el) =>
+    el.addEventListener("input", () => {
+      label();
+      try {
+        localStorage.setItem("rk_music_vol", vol.value);
+        localStorage.setItem("rk_music_duck", duck.value);
+      } catch (_) {}
+    })
+  );
+  $("#bgMusicFile").addEventListener("change", (e) => {
+    state.bgMusicFile = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+  });
+  sel.addEventListener("change", show);
+  label();
+  show();
+})();
+
 const GH_API = "https://api.github.com";
 function ghRepoName() {
   return (state.keys.ghRepo || "")
@@ -1563,10 +1599,22 @@ async function buildViaGithub(buildBtn) {
 
     // কোন ফাইলগুলো রিপোতে পাঠাতে হবে (আপলোড/AI ছবি ও নিজের অডিও); স্টক মিডিয়া শুধু লিংক হিসেবে যায়
     const uploads = [];
+    const musicVol = Math.min(1, Math.max(0.02, Number($("#musicVol").value) / 100 || 0.4));
+    const duckVol = Math.min(musicVol, Math.max(0, Number($("#musicDuckVol").value) / 100 || 0));
     if (state.audioFile) {
       const name = `audio.${extOf(state.audioFile, "mp3")}`;
       uploads.push({ name, file: state.audioFile });
       job.audio = { file: name, volume: 1 };
+      if (state.bgMusicFile) {
+        // ভয়েসওভার + আলাদা মিউজিক: ভয়েস চললে মিউজিক নিজে থেকে নিচে নামে (ducking)
+        const mname = `music.${extOf(state.bgMusicFile, "mp3")}`;
+        uploads.push({ name: mname, file: state.bgMusicFile });
+        job.music = { file: mname, vol: musicVol, duck: duckVol };
+      }
+    } else if (state.bgMusicFile) {
+      const mname = `music.${extOf(state.bgMusicFile, "mp3")}`;
+      uploads.push({ name: mname, file: state.bgMusicFile });
+      job.audio = { file: mname, bg: true, volume: musicVol };
     } else {
       job.audio = { url: DEFAULT_BG_MUSIC.url, bg: true, volume: DEFAULT_BG_MUSIC.volume };
     }
