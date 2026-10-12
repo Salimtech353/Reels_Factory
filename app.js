@@ -4,7 +4,7 @@
 // শুধু Groq/OpenRouter/Pexels/Pixabay API প্রক্সি করার জন্য ব্যবহৃত হয়।
 // ============================================================
 
-import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261014";
+import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261015";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -1378,15 +1378,35 @@ const RM_KEY = "rk_render_method";
 })();
 
 // ব্যাকগ্রাউন্ড মিউজিক + ducking (শুধু GitHub মেথডে)
+// সাবস্ক্রাইব ওভারলে ও এন্ড স্ক্রিন ফাইলের ঠিকানা (Reels_Factory রিপোর File/ ফোল্ডার)
+const BRAND_BASE = "https://raw.githubusercontent.com/Salimtech353/Reels_Factory/main/File/";
+const BRAND_FILES = {
+  overlay: { youtube: "Overly/Youtube.mp4", facebook: "Overly/Facebook.mp4" },
+  endscreen: { youtube: "Endscreen/Youtube.mp4", facebook: "Endscreen/Facebook.mp4" },
+};
 const MUSIC_DEFAULTS = { vol: 40, duck: 14 };
 (function initMusicControls() {
   const sel = $("#renderMethod");
   const box = $("#musicBox");
   const vol = $("#musicVol");
   const duck = $("#musicDuckVol");
+  const brandBox = $("#brandBox");
   const show = () => {
     box.style.display = sel.value === "github" ? "" : "none";
+    brandBox.style.display = sel.value === "github" ? "" : "none";
   };
+  [["overlaySel", "rk_overlay"], ["endSel", "rk_endscreen"]].forEach(([id, key]) => {
+    const el = $("#" + id);
+    try {
+      el.value = localStorage.getItem(key) || "none";
+    } catch (_) {}
+    if (!el.value) el.value = "none";
+    el.addEventListener("change", () => {
+      try {
+        localStorage.setItem(key, el.value);
+      } catch (_) {}
+    });
+  });
   const label = () => {
     $("#musicVolOut").textContent = vol.value + "%";
     $("#musicDuckOut").textContent = duck.value + "%";
@@ -1629,6 +1649,12 @@ async function buildViaGithub(buildBtn) {
       }
       job.segments.push({ start: seg.startSec, duration: seg.duration, media });
     });
+
+    // ব্র্যান্ড অ্যাসেট: ওভারলে (২০ সেকেন্ড পরে ৯ সেকেন্ড) ও এন্ড স্ক্রিন (ভিডিওর শেষে)
+    const ovSel = $("#overlaySel").value;
+    const enSel = $("#endSel").value;
+    if (BRAND_FILES.overlay[ovSel]) job.overlay = { url: BRAND_BASE + BRAND_FILES.overlay[ovSel], start: 20, dur: 9 };
+    if (BRAND_FILES.endscreen[enSel]) job.endscreen = { url: BRAND_BASE + BRAND_FILES.endscreen[enSel] };
 
     for (let k = 0; k < uploads.length; k++) {
       const u = uploads[k];

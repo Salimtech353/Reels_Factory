@@ -134,6 +134,25 @@
             <option value="github" data-i18n="renderGh"></option>
           </select>
         </div>
+        <div class="field" id="brandBox" style="display:none;">
+          <label style="display:block;">
+            <span data-i18n="overlayLabel"></span>
+            <select id="overlaySel">
+              <option value="none" data-i18n="optNone"></option>
+              <option value="youtube" data-i18n="optYoutube"></option>
+              <option value="facebook" data-i18n="optFacebook"></option>
+            </select>
+          </label>
+          <label style="display:block;margin-top:8px;">
+            <span data-i18n="endLabel"></span>
+            <select id="endSel">
+              <option value="none" data-i18n="optNone"></option>
+              <option value="youtube" data-i18n="optYoutube"></option>
+              <option value="facebook" data-i18n="optFacebook"></option>
+            </select>
+          </label>
+          <small class="hint" data-i18n="brandHint"></small>
+        </div>
         <div class="field" id="musicBox" style="display:none;">
           <span data-i18n="musicLabel"></span>
           <input type="file" id="bgMusicFile" accept="audio/*" />
