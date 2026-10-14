@@ -2,41 +2,40 @@
 // body: { provider: 'pexels'|'pixabay', apiKey, query, type: 'videos'|'photos' }
 // returns: { results: [{thumb, downloadUrl, type:'video'|'photo', source, width, height}] }
 
-exports.handler = async (event) => {
-  if (event.httpMethod !== "POST") {
-    return { statusCode: 405, body: JSON.stringify({ error: "POST only" }) };
+module.exports = async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "POST only" });
   }
 
-  let body;
-  try {
-    body = JSON.parse(event.body);
-  } catch (e) {
-    return { statusCode: 400, body: JSON.stringify({ error: "Invalid JSON body" }) };
+  let body = req.body;
+  if (typeof body === "string") {
+    try {
+      body = JSON.parse(body);
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid JSON body" });
+    }
   }
+  body = body || {};
 
   const { provider, apiKey, query, type, page, orientation } = body;
   if (!apiKey || !query) {
-    return { statusCode: 400, body: JSON.stringify({ error: "apiKey/query missing" }) };
+    return res.status(400).json({ error: "apiKey/query missing" });
   }
 
   try {
     if (provider === "pexels") {
       const results = await searchPexels(apiKey, query, type, page || 1, orientation);
-      return ok({ results });
+      return res.status(200).json({ results });
     }
     if (provider === "pixabay") {
       const results = await searchPixabay(apiKey, query, type, page || 1, orientation);
-      return ok({ results });
+      return res.status(200).json({ results });
     }
-    return { statusCode: 400, body: JSON.stringify({ error: "Unknown provider" }) };
+    return res.status(400).json({ error: "Unknown provider" });
   } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    return res.status(500).json({ error: err.message });
   }
 };
-
-function ok(payload) {
-  return { statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
-}
 
 async function searchPexels(apiKey, query, type, page, orientation) {
   const isVideo = type === "videos";
