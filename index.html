@@ -69,7 +69,9 @@
         <p class="audio-meta" id="audioMeta"></p>
         <p class="hint audio-default" id="audioDefaultNote" data-i18n="audioDefaultNote"></p>
         <button class="btn btn-primary" id="transcribeBtn" type="button" disabled data-i18n="transcribeBtn"></button>
+        <button class="btn btn-secondary" id="alignBtn" type="button" disabled data-i18n="alignBtn" style="margin-top:8px;"></button>
         <p class="hint" data-i18n="transcribeHint"></p>
+        <p class="hint" data-i18n="alignHint"></p>
       </div>
 
       <label class="field">
@@ -127,14 +129,7 @@
           <div><small data-i18n="sumScenes"></small><b id="sumScenes">–</b></div>
           <div><small data-i18n="sumRes"></small><b id="sumRes">–</b></div>
         </div>
-        <div class="field">
-          <span data-i18n="renderMethodLabel"></span>
-          <select id="renderMethod">
-            <option value="shotstack" data-i18n="renderShot"></option>
-            <option value="github" data-i18n="renderGh"></option>
-          </select>
-        </div>
-        <div class="field" id="brandBox" style="display:none;">
+        <div class="field" id="brandBox">
           <label style="display:block;">
             <span data-i18n="overlayLabel"></span>
             <select id="overlaySel">
@@ -153,7 +148,7 @@
           </label>
           <small class="hint" data-i18n="brandHint"></small>
         </div>
-        <div class="field" id="musicBox" style="display:none;">
+        <div class="field" id="musicBox">
           <span data-i18n="musicLabel"></span>
           <input type="file" id="bgMusicFile" accept="audio/*" />
           <small class="hint" data-i18n="musicHint"></small>
@@ -183,17 +178,6 @@
           <option value="854x480" data-i18n="resSd"></option>
           <option value="1280x720" selected data-i18n="resHd"></option>
           <option value="1920x1080" data-i18n="resFhd"></option>
-        </select>
-      </div>
-      <div class="field">
-        <span data-i18n="borderLabel"></span>
-        <select id="borderSelect">
-          <option value="0" data-i18n="b0"></option>
-          <option value="6" data-i18n="b6"></option>
-          <option value="10" data-i18n="b10"></option>
-          <option value="12" selected data-i18n="b12"></option>
-          <option value="13" data-i18n="b13"></option>
-          <option value="15" data-i18n="b15"></option>
         </select>
       </div>
       <label class="field checkbox-field">
@@ -348,11 +332,6 @@
         <input type="password" id="pixabayKey" placeholder="12345678-abc..." autocomplete="off" />
       </label>
 
-      <label class="field">
-        <span><span>Shotstack API Key</span> <a href="https://dashboard.shotstack.io/register" target="_blank" rel="noopener" data-i18n="getKey"></a></span>
-        <input type="password" id="shotstackKey" placeholder="sandbox key..." autocomplete="off" />
-      </label>
-      <p class="hint" data-i18n="shotstackHint"></p>
       <button class="btn btn-primary" id="saveKeysBtn" data-i18n="saveKeys"></button>
       <p class="status-line" id="keysStatus"></p>
         </div>

@@ -33,7 +33,7 @@ applyI18n();
 
 // ---------- state ----------
 const state = {
-  keys: { groq: "", openrouter: "", pexels: "", pixabay: "", shotstack: "", geminiTranscribe: "", pollinations: "", pollModel: "", ghToken: "", ghRepo: "" },
+  keys: { groq: "", openrouter: "", pexels: "", pixabay: "", geminiTranscribe: "", pollinations: "", pollModel: "", ghToken: "", ghRepo: "" },
   audioFile: null,
   bgMusicFile: null,
   segments: [], // {id, start, end, startSec, endSec, duration, text, query, entity, mediaType, media:{source,url,thumb,file}}
@@ -49,7 +49,6 @@ function loadKeys() {
   $("#openrouterKey").value = state.keys.openrouter || "";
   $("#pexelsKey").value = state.keys.pexels || "";
   $("#pixabayKey").value = state.keys.pixabay || "";
-  $("#shotstackKey").value = state.keys.shotstack || "";
   $("#geminiTranscribeKey").value = state.keys.geminiTranscribe || "";
   $("#pollinationsKey").value = state.keys.pollinations || "";
   $("#pollinationsModel").value = state.keys.pollModel || "";
@@ -61,7 +60,6 @@ function saveKeys() {
   state.keys.openrouter = $("#openrouterKey").value.trim();
   state.keys.pexels = $("#pexelsKey").value.trim();
   state.keys.pixabay = $("#pixabayKey").value.trim();
-  state.keys.shotstack = $("#shotstackKey").value.trim();
   state.keys.geminiTranscribe = $("#geminiTranscribeKey").value.trim();
   state.keys.pollinations = $("#pollinationsKey").value.trim();
   state.keys.pollModel = $("#pollinationsModel").value.trim();
@@ -69,7 +67,7 @@ function saveKeys() {
   state.keys.ghRepo = $("#ghRepo").value.trim();
   localStorage.setItem("rk_keys", JSON.stringify(state.keys));
   const el = $("#keysStatus");
-  if (!(state.keys.groq || state.keys.openrouter) || !state.keys.pexels || !state.keys.shotstack) {
+  if (!(state.keys.groq || state.keys.openrouter) || !state.keys.pexels) {
     setMsg(el, { key: "keysNeed" }, "status-line err");
   } else {
     setMsg(el, { key: "keysSaved" }, "status-line ok");
@@ -388,6 +386,7 @@ $("#audioInput").addEventListener("change", (e) => {
   });
   refreshBuildAvailability();
   $("#transcribeBtn").disabled = false;
+  $("#alignBtn").disabled = false;
 });
 
 $("#transcribeBtn").addEventListener("click", () => {
@@ -444,31 +443,8 @@ function splitLongSegments(segments, maxSec = MAX_SEGMENT_SEC) {
   return out;
 }
 
-// ---------- ট্রান্সক্রিপশন: Gemini (প্রধান) → OpenRouter (ফলব্যাক, মডেল-চেইন) ----------
+// ---------- ট্রান্সক্রিপশন: Gemini (প্রধান) → ব্যর্থ হলে স্ক্রিপ্ট দিয়ে API-ছাড়া সময়-মেলানো ----------
 const GEMINI_TR_MODEL = "gemini-3.6-flash";
-
-// OpenRouter অডিও-মডেল চেইন: বামে হালকা/দ্রুত → ডানে বেশি শক্তিশালী। OpenRouter-এ নেই এমন মডেল নিজে থেকেই বাদ যায়।
-const OR_AUDIO_MODELS = [
-  "google/gemini-2.5-flash",
-  "google/gemini-3-flash-preview",
-  "google/gemini-2.5-pro",
-  "google/gemini-3-pro-preview",
-  "openai/gpt-4o-audio-preview",
-];
-
-function audioFormatOf(file) {
-  const ext = (file.name.split(".").pop() || "").toLowerCase();
-  const byExt = { mp3: "mp3", wav: "wav", m4a: "m4a", aac: "aac", ogg: "ogg", oga: "ogg", flac: "flac", aiff: "aiff", aif: "aiff", mp4: "m4a" };
-  if (byExt[ext]) return byExt[ext];
-  const mime = (file.type || "").toLowerCase();
-  if (mime.includes("mpeg") || mime.includes("mp3")) return "mp3";
-  if (mime.includes("wav")) return "wav";
-  if (mime.includes("ogg")) return "ogg";
-  if (mime.includes("flac")) return "flac";
-  if (mime.includes("aac")) return "aac";
-  if (mime.includes("mp4") || mime.includes("m4a")) return "m4a";
-  return "mp3";
-}
 
 // মডেলের টেক্সট আউটপুট থেকে সেগমেন্ট অ্যারে বের করা; ব্যর্থ হলে এরর (যাতে পরের মডেল/প্রোভাইডারে যাওয়া যায়)
 function parseTranscriptJson(text) {
@@ -511,118 +487,185 @@ async function transcribeViaGemini(file, base64) {
   return parseTranscriptJson(text);
 }
 
-async function openRouterAudioChain() {
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 4000);
-    const res = await fetch("https://openrouter.ai/api/v1/models", { signal: ctrl.signal });
-    clearTimeout(timer);
-    if (res.ok) {
-      const ids = new Set(((await res.json())?.data || []).map((m) => m.id));
-      const alive = OR_AUDIO_MODELS.filter((m) => ids.has(m));
-      if (alive.length) return alive;
-    }
-  } catch (_) {}
-  return OR_AUDIO_MODELS;
+// ============================================================
+// স্ক্রিপ্ট + অডিওর নীরব বিরতি থেকে সময় বসানো (কোনো AI/API ছাড়া)
+// ভয়েসওভার আপনি আগেই বানিয়েছেন, তাই লেখাটা আপনার কাছে আছে — শুধু "কোন লাইন কখন শুরু" সেটা দরকার।
+// অডিওর শব্দ মেপে দৃশ্যের মাঝের নীরব বিরতিগুলো খুঁজে প্রতিটা লাইনের সময় ঠিক করা হয়।
+// ============================================================
+
+// স্ক্রিপ্ট বক্স থেকে শুধু লেখাগুলো নেয় (আগে থেকে টাইমস্ট্যাম্প থাকলে সেটা বাদ দিয়ে), ফাঁকা লাইন বাদ
+function scriptTextLines() {
+  const re = /^\d{1,2}:\d{2}(?::\d{2})?\s*-\s*\d{1,2}:\d{2}(?::\d{2})?\s*\|\s*(.*)$/;
+  return $("#scriptInput")
+    .value.split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const m = re.exec(l);
+      return (m ? m[1] : l).trim();
+    })
+    .filter(Boolean);
 }
 
-async function transcribeViaOpenRouter(file, base64, onModel) {
-  const chain = await openRouterAudioChain();
-  const format = audioFormatOf(file);
-  const errors = [];
-  for (const model of chain) {
-    onModel && onModel(model);
+// অডিও ডিকোড করে প্রতি ২০ মিলিসেকেন্ডের শব্দের জোর (dB) বের করে।
+// মেমরি কম লাগাতে ৮kHz-এ ডিকোড করা হয় (নীরবতা ধরতে এটুকুই যথেষ্ট)।
+async function audioLoudnessFrames(file) {
+  const buf = await file.arrayBuffer();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) throw new Error(t("alignNoAudioApi"));
+  let ctx;
+  try {
+    ctx = new AC({ sampleRate: 8000 });
+  } catch (_) {
+    ctx = new AC();
+  }
+  let audio;
+  try {
+    audio = await new Promise((resolve, reject) => ctx.decodeAudioData(buf, resolve, reject));
+  } catch (_) {
+    throw new Error(t("alignDecodeFail"));
+  } finally {
     try {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${state.keys.openrouter}`,
-          "HTTP-Referer": location.origin,
-          "X-Title": "Reel Factory",
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.2,
-          max_tokens: 16000,
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: TRANSCRIBE_PROMPT },
-                { type: "input_audio", input_audio: { data: base64, format } },
-              ],
-            },
-          ],
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) {
-        const err = new Error(data?.error?.message || `HTTP ${res.status}`);
-        err.status = res.status;
-        throw err;
-      }
-      let text = data?.choices?.[0]?.message?.content;
-      if (Array.isArray(text)) text = text.map((p) => p?.text || "").join("");
-      if (!text) throw new Error(t("errNoTranscript"));
-      if (data?.choices?.[0]?.finish_reason === "length") throw new Error("output truncated");
-      return { rawSegments: parseTranscriptJson(text), model };
-    } catch (e) {
-      errors.push(`${model}: ${e.message}`);
-      if (e.status === 401) break; // চাবি ভুল — বাকি মডেলে চেষ্টা বৃথা
+      ctx.close();
+    } catch (_) {}
+  }
+  const sr = audio.sampleRate;
+  const frameLen = Math.max(1, Math.round(sr * 0.02));
+  const frames = Math.floor(audio.length / frameLen);
+  const chs = [];
+  for (let c = 0; c < audio.numberOfChannels; c++) chs.push(audio.getChannelData(c));
+  const db = new Float32Array(frames);
+  for (let f = 0; f < frames; f++) {
+    let sum = 0;
+    const a = f * frameLen;
+    for (let c = 0; c < chs.length; c++) {
+      const d = chs[c];
+      for (let i = a; i < a + frameLen; i++) sum += d[i] * d[i];
+    }
+    db[f] = 20 * Math.log10(Math.sqrt(sum / (frameLen * chs.length)) + 1e-9);
+  }
+  return { db, frameSec: frameLen / sr };
+}
+
+// thr (dB) এর নিচে টানা minSec সেকেন্ড থাকলে সেটা একটা "নীরব অংশ"
+function findSilences(db, frameSec, thr, minSec) {
+  const out = [];
+  let start = -1;
+  for (let i = 0; i < db.length; i++) {
+    if (db[i] < thr) {
+      if (start < 0) start = i;
+    } else if (start >= 0) {
+      if ((i - start) * frameSec >= minSec) out.push({ s: start * frameSec, e: i * frameSec });
+      start = -1;
     }
   }
-  throw new Error(errors.slice(-3).join(" ; "));
+  if (start >= 0 && (db.length - start) * frameSec >= minSec) out.push({ s: start * frameSec, e: db.length * frameSec });
+  return out;
 }
 
+// n টা লাইনের জন্য n-1 টা সীমানা লাগে: অডিওর ভেতরের নীরব অংশগুলোর মধ্যে সবচেয়ে লম্বা n-1 টা বেছে নেওয়া হয়।
+// (দৃশ্যের মাঝের ছোট বিরতি/শ্বাস এতে ভুল করে সীমানা হয়ে যায় না।)
+function alignScriptTimes(lines, loud) {
+  const n = lines.length;
+  const { db, frameSec } = loud;
+  const total = db.length * frameSec;
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  // কথার স্বাভাবিক জোর = সবচেয়ে জোরালো ১০% ফ্রেমের নিচের সীমা (p90)
+  const sorted = Array.from(db).sort((a, b) => a - b);
+  const p90 = sorted.length ? sorted[Math.floor(sorted.length * 0.9)] : -20;
+  // প্রথমে কড়া সীমা; বিরতি কম পেলে আরেকটু সংবেদনশীল করে আবার চেষ্টা
+  const attempts = [
+    { thr: clamp(p90 - 32, -60, -38), min: 0.25 },
+    { thr: clamp(p90 - 26, -55, -32), min: 0.12 },
+  ];
+  let interior = [];
+  for (const at of attempts) {
+    const sil = findSilences(db, frameSec, at.thr, at.min);
+    // শুরু ও শেষের নীরবতা সীমানা নয়
+    interior = sil.filter((q) => q.s > 0.05 && q.e < total - 0.05);
+    if (interior.length >= n - 1) break;
+  }
+  if (interior.length < n - 1) return { error: true, found: interior.length };
+
+  const ranked = interior.map((q) => ({ ...q, len: q.e - q.s })).sort((a, b) => b.len - a.len);
+  const chosen = ranked.slice(0, n - 1).sort((a, b) => a.s - b.s);
+  const nextBest = ranked[n - 1];
+  const minChosen = chosen.reduce((m, q) => Math.min(m, q.len), Infinity);
+  // বাছাই করা সবচেয়ে ছোট বিরতি আর বাদ পড়া সবচেয়ে বড় বিরতি কাছাকাছি হলে সন্দেহ
+  const ambiguous = n > 1 && Boolean(nextBest) && minChosen < nextBest.len * 1.4;
+
+  // দৃশ্যের শুরু (সেকেন্ডে, পূর্ণসংখ্যা — অ্যাপের টাইমস্ট্যাম্প ফরম্যাট mm:ss)।
+  // বিরতির ভেতরের সবচেয়ে দেরির পূর্ণ সেকেন্ডে কাটা হয়, অর্থাৎ পরের কথা শুরুর ঠিক আগে; আগের দৃশ্য বিরতির সময়টুকু দেখায়।
+  const starts = [0];
+  let prev = 0;
+  chosen.forEach((q) => {
+    const lo = Math.ceil(q.s);
+    const hi = Math.floor(q.e - 0.1);
+    let cut = hi >= lo ? hi : Math.round((q.s + q.e) / 2);
+    cut = Math.max(cut, prev + 1);
+    starts.push(cut);
+    prev = cut;
+  });
+  const end = Math.max(Math.ceil(total), prev + 1);
+  const segments = lines.map((text, i) => ({ start: starts[i], end: i < n - 1 ? starts[i + 1] : end, text }));
+  return { segments, ambiguous };
+}
+
+async function alignFromScript(file, extraNotes = []) {
+  const lines = scriptTextLines();
+  if (!lines.length) {
+    setAudioNotes([{ key: "alignNoScript" }], true);
+    return false;
+  }
+  $("#alignBtn").disabled = true;
+  setAudioNotes([...extraNotes, { key: "alignWorking" }]);
+  try {
+    const loud = await audioLoudnessFrames(file);
+    const r = alignScriptTimes(lines, loud);
+    if (r.error) {
+      setAudioNotes([{ key: "alignFew", params: { lines: lines.length, need: lines.length - 1, gaps: r.found } }], true);
+      return false;
+    }
+    const segments = splitLongSegments(r.segments);
+    $("#scriptInput").value = segments.map((sg) => `${secToClock(sg.start)}-${secToClock(sg.end)} | ${sg.text.trim()}`).join("\n");
+    const notes = [...extraNotes, { key: "alignReady", params: { n: lines.length } }];
+    if (r.ambiguous) notes.push({ key: "alignAmbiguous" });
+    setAudioNotes(notes);
+    return true;
+  } catch (e) {
+    setAudioNotes([{ key: "trFail", params: { msg: e.message } }], true);
+    return false;
+  } finally {
+    $("#alignBtn").disabled = false;
+  }
+}
+
+$("#alignBtn").addEventListener("click", () => {
+  if (state.audioFile) alignFromScript(state.audioFile);
+});
+
+// ---------- অটো ট্রান্সক্রিপশন: Gemini (প্রধান) → ব্যর্থ হলে স্ক্রিপ্ট বক্সের লেখা দিয়ে API ছাড়া সময়-মেলানো ----------
 async function autoTranscribeAudio(file) {
   let rateLimited = false;
-  if (!state.keys.geminiTranscribe && !state.keys.openrouter) {
-    setAudioNotes([{ key: "noTrKey" }]);
-    return;
-  }
-  if (file.size > TRANSCRIBE_MAX_BYTES) {
-    setAudioNotes([{ key: "fileTooBig", params: { mb: (file.size / 1024 / 1024).toFixed(1) } }]);
+  // Gemini সফল হলে বক্সের লেখা বদলে যাবে, তাই ফলব্যাকের জন্য স্ক্রিপ্ট আছে কিনা আগেই দেখে রাখা হয়
+  const haveScript = scriptTextLines().length > 0;
+  const geminiUsable = Boolean(state.keys.geminiTranscribe) && file.size <= TRANSCRIBE_MAX_BYTES;
+
+  if (!geminiUsable) {
+    const why = !state.keys.geminiTranscribe ? { key: "noTrKeyUseAlign" } : { key: "fileTooBig", params: { mb: (file.size / 1024 / 1024).toFixed(1) } };
+    if (haveScript) await alignFromScript(file, [why]);
+    else setAudioNotes([!state.keys.geminiTranscribe ? { key: "noTrKey" } : why]);
     return;
   }
 
   $("#transcribeBtn").disabled = true;
-
   try {
     const base64 = await fileToBase64(file);
-    let rawSegments = null;
-    let usedModel = "";
-    const errors = [];
+    setAudioNotes([{ key: "transcribing", params: { name: "Gemini" } }]);
+    const rawSegments = await transcribeViaGemini(file, base64);
 
-    // ১) Gemini (প্রধান)
-    if (state.keys.geminiTranscribe) {
-      setAudioNotes([{ key: "transcribing", params: { name: "Gemini" } }]);
-      try {
-        rawSegments = await transcribeViaGemini(file, base64);
-      } catch (e) {
-        errors.push(`Gemini: ${e.message}`);
-      }
-    }
-
-    // ২) OpenRouter (ফলব্যাক) — একটা মডেল ব্যর্থ হলে পরের শক্তিশালী মডেল
-    if (!rawSegments && state.keys.openrouter) {
-      setAudioNotes([{ key: "transcribing", params: { name: "OpenRouter" } }]);
-      try {
-        const r = await transcribeViaOpenRouter(file, base64, (m) =>
-          setAudioNotes([{ key: "transcribing", params: { name: `OpenRouter · ${m}` } }])
-        );
-        rawSegments = r.rawSegments;
-        usedModel = r.model;
-      } catch (e) {
-        errors.push(`OpenRouter: ${e.message}`);
-      }
-    }
-
-    if (!rawSegments) throw new Error(errors.join(" | ") || t("errTranscribe"));
-
-    // convert "mm:ss" strings to seconds so the segment shape matches what scriptLines expects
+    // "mm:ss" স্ট্রিং সেকেন্ডে রূপান্তর, যাতে সেগমেন্টের আকার scriptLines-এর সাথে মেলে
     let segments = rawSegments.map((s) => ({ start: tsToSeconds(s.start), end: tsToSeconds(s.end), text: String(s.text) }));
-
     segments = splitLongSegments(segments);
 
     const scriptLines = segments
@@ -630,16 +673,18 @@ async function autoTranscribeAudio(file) {
       .filter((line) => !line.endsWith("| "))
       .join("\n");
     $("#scriptInput").value = scriptLines;
-
-    const notes = [{ key: "trReady", params: { n: segments.length } }];
-    if (usedModel) notes.push({ key: "trViaOr", params: { model: usedModel } });
-    setAudioNotes(notes);
+    setAudioNotes([{ key: "trReady", params: { n: segments.length } }]);
   } catch (err) {
-    setAudioNotes([{ key: "trFail", params: { msg: err.message } }], true);
-    if (isRateLimitError(err.message)) {
-      setAudioNotes([...state.audioNotes, { key: "rateLimit" }], true);
-      rateLimited = true;
-      startCooldown($("#transcribeBtn"), 40);
+    if (haveScript) {
+      // Gemini ব্যর্থ — স্ক্রিপ্ট বক্সে লেখা থাকলে API ছাড়া পদ্ধতিতে সময় মেলানো
+      await alignFromScript(file, [{ key: "trGeminiFailedUseAlign", params: { msg: err.message } }]);
+    } else {
+      setAudioNotes([{ key: "trFail", params: { msg: err.message } }, { key: "trAlignTip" }], true);
+      if (isRateLimitError(err.message)) {
+        setAudioNotes([...state.audioNotes, { key: "rateLimit" }], true);
+        rateLimited = true;
+        startCooldown($("#transcribeBtn"), 40);
+      }
     }
   } finally {
     if (!rateLimited) $("#transcribeBtn").disabled = false;
@@ -655,7 +700,7 @@ const keysToggleBtn = $("#keysToggleBtn");
 const keysBody = $("#keysBody");
 function setKeysCollapsed() {} // চাবির অংশ এখন Settings-এর ভেতরে, সবসময় খোলা
 // প্রথমবার যদি প্রয়োজনীয় চাবিগুলো আগে থেকেই সংরক্ষিত থাকে, প্যানেলটা গুটিয়ে রাখা হচ্ছে
-const keysOk = Boolean((state.keys.groq || state.keys.openrouter) && state.keys.pexels && state.keys.shotstack);
+const keysOk = Boolean((state.keys.groq || state.keys.openrouter) && state.keys.pexels);
 if (keysOk) wiz.done.add(1);
 
 // ---------- Settings modal ----------
@@ -1044,19 +1089,19 @@ function refreshBuildAvailability() {
 }
 
 // ============================================================
-// Shotstack — ক্লাউড ভিডিও রেন্ডার (Ingest API দিয়ে লোকাল ফাইল আপলোড,
-// Edit API দিয়ে টাইমলাইন রেন্ডার)
+// রেন্ডার সেটিংস: রেজোলিউশন, ক্যাপশন ফন্ট, ডিফল্ট মিউজিক
+// (ভিডিও রেন্ডার হয় GitHub Actions + FFmpeg দিয়ে — নিচে "GitHub Actions" অংশ দেখুন)
 // ============================================================
 const RES_MAP = { "854x480": "sd", "1280x720": "hd", "1920x1080": "1080" };
 // প্রতিটা aspect ratio + resolution তালিকার আনুমানিক পিক্সেল মাপ — শুধু ক্যাপশন
 // বক্সের আকার ঠিকমতো বসানোর জন্য ব্যবহার হয়, রেন্ডারিং resolution+aspectRatio
-// প্যারামিটার দিয়েই Shotstack নিজে করে।
+// প্যারামিটার দিয়েই রেন্ডারার নিজে করে।
 const RES_DIMENSIONS = {
   "16:9": { sd: { w: 1024, h: 576 }, hd: { w: 1280, h: 720 }, "1080": { w: 1920, h: 1080 } },
   "9:16": { sd: { w: 576, h: 1024 }, hd: { w: 720, h: 1280 }, "1080": { w: 1080, h: 1920 } },
   "1:1": { sd: { w: 576, h: 576 }, hd: { w: 720, h: 720 }, "1080": { w: 1080, h: 1080 } },
 };
-// বাংলা লেখার জন্য Shotstack-এর ডিফল্ট ফন্টে গ্লিফ নেই (বক্স/টোফু দেখাবে),
+// বাংলা লেখার জন্য রেন্ডারার-এর ডিফল্ট ফন্টে গ্লিফ নেই (বক্স/টোফু দেখাবে),
 // তাই বাংলা-সাপোর্টেড একটা Google Font (Hind Siliguri) আলাদাভাবে লোড করা হচ্ছে।
 // ক্যাপশন ফন্ট তালিকা — সবগুলো বাংলা ও ইংরেজি দুটোই সাপোর্ট করে (Google Fonts, OFL লাইসেন্স)।
 // family নাম অবশ্যই ফাইলের basename (এক্সটেনশন ছাড়া) হতে হয়। নতুন ফন্ট যোগ করতে এখানে একটা এন্ট্রি + HTML-এ একটা <option> দিন।
@@ -1082,189 +1127,9 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function shotstackCall(action, payload) {
-  const res = await fetch("/api/shotstack", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, apiKey: state.keys.shotstack, ...payload }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || t("errShot"));
-  return data;
-}
-
-// লোকাল ফাইল (ব্যবহারকারীর আপলোড করা অডিও/ছবি/ভিডিও) Shotstack-এ পাঠিয়ে
-// একটা ফেচযোগ্য URL ফেরত আনে — কারণ Edit API-এর প্রতিটা অ্যাসেটের জন্য URL লাগে।
-async function uploadToShotstack(file) {
-  const { id, uploadUrl } = await shotstackCall("upload-url", {});
-  const putRes = await fetch(uploadUrl, { method: "PUT", body: file });
-  if (!putRes.ok) throw new Error(t("errUpload"));
-
-  for (let i = 0; i < 60; i++) {
-    const status = await shotstackCall("source-status", { id });
-    if (status.status === "ready" && status.url) return status.url;
-    if (status.status === "failed") throw new Error(t("errUploadProc", { msg: status.error || "" }));
-    await sleep(2000);
-  }
-  throw new Error(t("errUploadTimeout"));
-}
-
-// জনপ্রিয় ও আধুনিক ট্রানজিশনের একটা তালিকা — প্রতিটা দৃশ্যে ঘুরিয়ে-ফিরিয়ে
-// আলাদা একটা বসানো হয়, যাতে পুরো ভিডিওতে একঘেয়ে না লাগে।
 const TRANSITION_STYLES = ["fade", "slideLeft", "slideRight", "slideUp", "zoom", "carouselLeft", "carouselRight", "wipeLeft", "wipeRight"];
 
 const BORDER_COLOR = "#1A1A1A"; // ব্ল্যাক অ্যাশ — নিরেট কালো নয়, সামান্য ধূসর-কালো
-
-// ক্যাপশন সবসময় একবারে মাত্র এক লাইন দেখায়। টেক্সট এক লাইনে না আঁটলে শব্দ-সীমানা
-// বজায় রেখে সমান-সমান অংশে ভাগ করা হয় (যাতে শেষে একটা লাইনে একটামাত্র শব্দ পড়ে না থাকে),
-// আর অংশগুলো একটার পর একটা একই জায়গায় দেখানো হয় — প্রথম লাইন শেষ হলে মুছে গিয়ে
-// সাথে সাথে পরের লাইন শুরু হয়।
-function wrapCaptionLines(text, fontSize, boxWidthPx) {
-  const clean = text.trim().replace(/\s+/g, " ");
-  // বাংলা অক্ষরের গড় প্রস্থ প্রায় ০.৫–০.৬ em; একটু নিরাপদে থাকতে ০.৬২ ধরা হয়েছে,
-  // যাতে কোনো লাইন ভুল করে দুই লাইনে ভেঙে না যায়।
-  const maxChars = Math.max(6, Math.floor(boxWidthPx / (fontSize * 0.62)));
-  if (clean.length <= maxChars) return [clean];
-  const parts = Math.ceil(clean.length / maxChars);
-  const limit = Math.min(maxChars, Math.ceil(clean.length / parts) + 2);
-  const lines = [];
-  let current = "";
-  for (const w of clean.split(" ")) {
-    const candidate = current ? `${current} ${w}` : w;
-    if (candidate.length > limit && current) {
-      lines.push(current);
-      current = w;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current) lines.push(current);
-  return lines;
-}
-
-function buildShotstackTimeline(mediaUrls, audioUrl, resolutionKey, aspectRatio, captionsEnabled, borderPercent, captionOptions) {
-  const dim = (RES_DIMENSIONS[aspectRatio] || RES_DIMENSIONS["9:16"])[resolutionKey] || RES_DIMENSIONS["9:16"].sd;
-  const m = Math.max(0, Math.min(0.25, (borderPercent || 0) / 100)); // এক পাশের মার্জিন, canvas-এর ভগ্নাংশ হিসেবে
-  // মূল ফুটেজের বক্স — এই নির্দিষ্ট পিক্সেল মাপের মধ্যেই fit/effect (zoom) হিসাব হয়,
-  // তাই Ken Burns zoom করলেও বর্ডারের বাইরে ছড়িয়ে পড়বে না।
-  const contentBox = { w: Math.round(dim.w * (1 - 2 * m)), h: Math.round(dim.h * (1 - 2 * m)) };
-
-  const clips = state.segments.map((seg, i) => {
-    const m2 = mediaUrls[i];
-    const isPhoto = m2.type === "photo";
-    let asset;
-    if (isPhoto) {
-      asset = { type: "image", src: m2.url };
-    } else {
-      asset = { type: "video", src: m2.url, volume: 0 };
-      // সোর্স ভিডিওর দৈর্ঘ্য জানা থাকলে স্পিড এমনভাবে সেট করা হচ্ছে যাতে
-      // ক্লিপটা ঠিক সেগমেন্টের টাইমস্ট্যাম্প জুড়েই শেষ হয় — ছোট হলে স্লো,
-      // বড় হলে ফাস্ট। speed = original_duration / segment_duration
-      if (m2.duration && m2.duration > 0) {
-        const speed = m2.duration / seg.duration;
-        asset.speed = Math.min(10, Math.max(0.1, Number(speed.toFixed(2))));
-      }
-    }
-    const style = TRANSITION_STYLES[i % TRANSITION_STYLES.length];
-    return {
-      asset,
-      start: seg.startSec,
-      length: seg.duration,
-      // Shotstack-এ fit:"cover" ফুটেজকে অনুপাত না মেনে টেনে স্ট্রেচ করে (শেপ নষ্ট হয়);
-      // অনুপাত ঠিক রেখে স্কেল করে বাড়তি অংশ ক্রপ করে দেয় fit:"crop"।
-      fit: "crop",
-      width: contentBox.w,
-      height: contentBox.h,
-      position: "center",
-      transition: { in: style, out: TRANSITION_STYLES[(i + 1) % TRANSITION_STYLES.length] },
-      ...(isPhoto ? { effect: "zoomIn" } : {}),
-    };
-  });
-  const totalDuration = Math.max(...state.segments.map((s) => s.endSec));
-
-  const tracks = [];
-  // ক্যাপশন ট্র্যাক সবার উপরে থাকে (Shotstack-এ tracks[0] সবচেয়ে উপরের লেয়ার)
-  if (captionsEnabled) {
-    const opts = captionOptions || {};
-    // ব্যবহারকারীর কাছে ৮=সবচেয়ে ছোট, ১৮=সবচেয়ে বড় হিসেবে দেখানো হয়, কিন্তু
-    // ফন্ট-সাইজ গণনার সূত্রে divisor ছোট হলে ফন্ট বড় হয় — তাই মান উল্টে নেওয়া হচ্ছে।
-    // ভিত্তি হিসেবে ফুটেজ-বক্সের ছোট বাহুটা নেওয়া হয়েছে (প্রস্থ নয়), তাই ল্যান্ডস্কেপ,
-    // ভার্টিক্যাল ও স্কয়ার — তিন ফরম্যাটেই একই সংখ্যায় প্রায় একই আকারের ফন্ট আসে।
-    const rawSize = Math.max(8, Math.min(18, Number(opts.size) || 13));
-    const divisor = 26 - rawSize;
-    const fontSize = Math.round(Math.min(contentBox.w, contentBox.h) / divisor);
-    const color = opts.color || "#ffffff";
-    const boxWidth = Math.round(contentBox.w * 0.92);
-    // বক্সে দুই লাইনের জায়গা রাখা হয়েছে আর লেখা বক্সের *নিচ-সারিবদ্ধ* (bottom)। তাই এক লাইনের
-    // ক্যাপশন সবসময় বক্সের একদম নিচে (ফুটেজের নিচের কিনারার ঠিক উপরে) বসে; অনুমানে ভুল হয়ে কখনো
-    // দুই লাইনে ভেঙে গেলেও বাড়তি লাইনটা উপরের দিকে যায়, বর্ডারের দিকে না।
-    const boxHeight = Math.round(fontSize * 1.5 * 2);
-    // ফুটেজ-বক্সের নিচের কিনারা (পিক্সেলে, উপর থেকে) — ক্যাপশন এই রেখার ঠিক উপরেই বসবে
-    const footageBottomPx = (1 - m) * dim.h;
-    const paddingPx = Math.max(4, fontSize * 0.25);
-    const centerYpx = footageBottomPx - paddingPx - boxHeight / 2;
-    const offsetY = Math.max(-0.9, Math.min(0.9, (dim.h / 2 - centerYpx) / dim.h)); // positive = up, negative = down
-    const anim = opts.animation || "typewriter";
-
-    const captionClips = [];
-    state.segments.forEach((seg) => {
-      const lines = wrapCaptionLines(seg.text, fontSize, boxWidth);
-      // সেগমেন্টের সময়টুকু প্রতিটা লাইনের দৈর্ঘ্য অনুপাতে ভাগ করা হচ্ছে, যাতে
-      // ছোট লাইন দ্রুত আর বড় লাইন একটু বেশি সময় দেখানো হয়
-      const totalChars = lines.reduce((sum, l) => sum + l.length, 0) || 1;
-      const segEnd = seg.startSec + seg.duration;
-      let cursor = seg.startSec;
-      lines.forEach((lineText, idx) => {
-        const isLast = idx === lines.length - 1;
-        // শেষ লাইন সেগমেন্টের শেষ পর্যন্ত (ফ্লোট ড্রিফট এড়াতে), বাকিগুলো অনুপাতে
-        const lineLength = isLast ? segEnd - cursor : (seg.duration * lineText.length) / totalChars;
-        const clip = {
-          asset: {
-            type: "rich-text",
-            text: lineText,
-            font: { family: captionFontOf(opts).family, size: fontSize, color, weight: captionFontOf(opts).weight },
-            align: { horizontal: "center", vertical: "bottom" },
-          },
-          start: Number(cursor.toFixed(3)),
-          length: Number(lineLength.toFixed(3)),
-          position: "center",
-          offset: { x: 0, y: offsetY },
-          width: boxWidth,
-          height: boxHeight,
-        };
-        if (anim === "typewriter") {
-          const typeDuration = Math.max(0.3, Math.min(lineLength - 0.15, lineText.length * 0.05));
-          clip.asset.animation = { preset: "typewriter", duration: Number(typeDuration.toFixed(2)), style: "character" };
-        } else if (anim !== "none") {
-          // fade / slideUp / slideLeft / zoom / wipeLeft — সাধারণ ক্লিপ ট্রানজিশন হিসেবে প্রয়োগ করা হচ্ছে
-          clip.transition = { in: anim, out: anim };
-        }
-        captionClips.push(clip);
-        cursor += lineLength;
-      });
-    });
-    tracks.push({ clips: captionClips });
-  }
-  tracks.push({ clips }); // দৃশ্য (ছবি/ভিডিও)
-  const isBgMusic = audioUrl === DEFAULT_BG_MUSIC.url; // ভয়েসওভার নেই → ব্যাকগ্রাউন্ড মিউজিক, শেষে ফেড-আউট
-  tracks.push({
-    clips: [
-      {
-        asset: isBgMusic
-          ? { type: "audio", src: audioUrl, volume: DEFAULT_BG_MUSIC.volume, effect: "fadeOut" }
-          : { type: "audio", src: audioUrl },
-        start: 0,
-        length: totalDuration,
-      },
-    ],
-  }); // অডিও
-
-  const timeline = { background: BORDER_COLOR, tracks };
-  if (captionsEnabled) {
-    timeline.fonts = [{ src: captionFontOf(captionOptions).url }];
-  }
-  return timeline;
-}
 
 let progressPart = null;
 function setProgress(pct, part) {
@@ -1284,78 +1149,7 @@ $("#buildBtn").addEventListener("click", async () => {
   const buildBtn = $("#buildBtn");
   buildBtn.disabled = true;
   markStepActive(5);
-
-  // বিকল্প মেথড: GitHub Actions + FFmpeg (Shotstack পথ নিচে অপরিবর্তিত)
-  if ($("#renderMethod").value === "github") {
-    await buildViaGithub(buildBtn);
-    return;
-  }
-
-  if (!state.keys.shotstack) {
-    setProgress(0, { key: "needShotstack" });
-    buildBtn.disabled = false;
-    return;
-  }
-
-  try {
-    let audioUrl = DEFAULT_BG_MUSIC.url;
-    if (state.audioFile) {
-      setProgress(3, { key: "upAudio" });
-      audioUrl = await uploadToShotstack(state.audioFile);
-    }
-
-    const mediaUrls = [];
-    for (let i = 0; i < state.segments.length; i++) {
-      const seg = state.segments[i];
-      setProgress(10 + Math.round((i / state.segments.length) * 35), { key: "prepSeg", params: { i: i + 1, n: state.segments.length } });
-      if (seg.media.source === "upload") {
-        const url = await uploadToShotstack(seg.media.file);
-        mediaUrls.push({ url, type: seg.media.type, duration: seg.media.duration });
-      } else {
-        mediaUrls.push({ url: seg.media.url, type: seg.media.type, duration: seg.media.duration });
-      }
-    }
-
-    setProgress(50, { key: "sendingRender" });
-    const resolution = RES_MAP[$("#resSelect").value] || "sd";
-    const aspectRatio = $("#aspectSelect").value || "9:16";
-    const captionsEnabled = $("#captionToggle").checked;
-    const borderPercent = Number($("#borderSelect").value) || 0;
-    const captionOptions = {
-      size: $("#captionSizeSelect").value,
-      color: $("#captionColorSelect").value,
-      animation: $("#captionAnimSelect").value,
-      font: $("#captionFontSelect").value,
-    };
-    const timeline = buildShotstackTimeline(mediaUrls, audioUrl, resolution, aspectRatio, captionsEnabled, borderPercent, captionOptions);
-    const { id: renderId } = await shotstackCall("render", { timeline, resolution, aspectRatio });
-
-    let finalUrl = null;
-    for (let i = 0; i < 100; i++) {
-      await sleep(3000);
-      const status = await shotstackCall("render-status", { id: renderId });
-      setProgress(52 + Math.min(45, i), { key: "rendering", params: { status: status.status } });
-      if (status.status === "done") {
-        finalUrl = status.url;
-        break;
-      }
-      if (status.status === "failed") throw new Error(t("renderFailed", { msg: status.error || "" }));
-    }
-    if (!finalUrl) throw new Error(t("renderTimeout"));
-
-    $("#resultVideo").src = finalUrl;
-    $("#downloadBtn").href = finalUrl;
-    $("#resultBox").hidden = false;
-    setProgress(100, { key: "renderDone" });
-    toast(t("renderDone"));
-    markStepDone(5);
-    saveRecentRender(finalUrl);
-  } catch (err) {
-    console.error(err);
-    setProgress(0, { key: "errPrefix", params: { msg: err.message } });
-  } finally {
-    buildBtn.disabled = false;
-  }
+  await buildViaGithub(buildBtn); // রেন্ডার এখন শুধু GitHub Actions + FFmpeg দিয়ে
 });
 
 // ============================================================
@@ -1363,20 +1157,6 @@ $("#buildBtn").addEventListener("click", async () => {
 // অ্যাপ জবের ফাইল রিপোতে পাঠায় → workflow চালু করে → GitHub-এ FFmpeg রেন্ডার করে
 // → ফলাফল Release হিসেবে ফেরত আসে। পিসি চালু রাখতে হয় না।
 // ============================================================
-const RM_KEY = "rk_render_method";
-(function initRenderMethod() {
-  const sel = $("#renderMethod");
-  try {
-    sel.value = localStorage.getItem(RM_KEY) || "shotstack";
-  } catch (_) {}
-  if (!sel.value) sel.value = "shotstack";
-  sel.addEventListener("change", () => {
-    try {
-      localStorage.setItem(RM_KEY, sel.value);
-    } catch (_) {}
-  });
-})();
-
 // ব্যাকগ্রাউন্ড মিউজিক + ducking (শুধু GitHub মেথডে)
 // সাবস্ক্রাইব ওভারলে ও এন্ড স্ক্রিন ফাইলের ঠিকানা (Reels_Factory রিপোর File/ ফোল্ডার)
 const BRAND_BASE = "https://raw.githubusercontent.com/Salimtech353/Reels_Factory/main/File/";
@@ -1386,15 +1166,8 @@ const BRAND_FILES = {
 };
 const MUSIC_DEFAULTS = { vol: 40, duck: 14 };
 (function initMusicControls() {
-  const sel = $("#renderMethod");
-  const box = $("#musicBox");
   const vol = $("#musicVol");
   const duck = $("#musicDuckVol");
-  const brandBox = $("#brandBox");
-  const show = () => {
-    box.style.display = sel.value === "github" ? "" : "none";
-    brandBox.style.display = sel.value === "github" ? "" : "none";
-  };
   [["overlaySel", "rk_overlay"], ["endSel", "rk_endscreen"]].forEach(([id, key]) => {
     const el = $("#" + id);
     try {
@@ -1427,10 +1200,9 @@ const MUSIC_DEFAULTS = { vol: 40, duck: 14 };
   $("#bgMusicFile").addEventListener("change", (e) => {
     state.bgMusicFile = e.target.files && e.target.files[0] ? e.target.files[0] : null;
   });
-  sel.addEventListener("change", show);
   label();
-  show();
 })();
+
 
 const GH_API = "https://api.github.com";
 function ghRepoName() {
@@ -1540,13 +1312,12 @@ function fitCaption(text, baseSize, boxWidth, measure100) {
   return { size: minSize, lines };
 }
 
-// Shotstack টাইমলাইনের মতো একই জ্যামিতি, কিন্তু ক্যাপশন FFmpeg রেন্ডারারের জন্য আলাদাভাবে সাজানো
-async function buildRenderJob(resolutionKey, aspectRatio, captionsEnabled, borderPercent, opts) {
+// FFmpeg রেন্ডারারের জন্য জবের বিবরণ (JSON) তৈরি; ক্যাপশন ব্রাউজারে আসল ফন্ট দিয়ে মেপে সাজানো
+async function buildRenderJob(resolutionKey, aspectRatio, captionsEnabled, opts) {
   const dim = (RES_DIMENSIONS[aspectRatio] || RES_DIMENSIONS["9:16"])[resolutionKey] || RES_DIMENSIONS["9:16"].sd;
-  const m = Math.max(0, Math.min(0.25, (borderPercent || 0) / 100));
-  const even = (v) => Math.max(2, Math.round(v / 2) * 2);
-  const cw = even(dim.w * (1 - 2 * m));
-  const ch = even(dim.h * (1 - 2 * m));
+  // বর্ডার নেই: ফুটেজ পুরো ফ্রেম জুড়ে থাকে
+  const cw = dim.w;
+  const ch = dim.h;
 
   let captions = { enabled: false };
   if (captionsEnabled) {
@@ -1610,7 +1381,7 @@ async function buildViaGithub(buildBtn) {
     const base = `jobs/${jobId}`;
     const resolutionKey = RES_MAP[$("#resSelect").value] || "sd";
     const aspectRatio = $("#aspectSelect").value || "9:16";
-    const job = await buildRenderJob(resolutionKey, aspectRatio, $("#captionToggle").checked, Number($("#borderSelect").value) || 0, {
+    const job = await buildRenderJob(resolutionKey, aspectRatio, $("#captionToggle").checked, {
       size: $("#captionSizeSelect").value,
       color: $("#captionColorSelect").value,
       animation: $("#captionAnimSelect").value,
