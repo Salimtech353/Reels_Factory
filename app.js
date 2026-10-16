@@ -132,7 +132,7 @@ $$(".rail-steps li, .m-steps li").forEach((li) =>
 
 // ---------- timestamp parsing ----------
 function tsToSeconds(ts) {
-  const parts = ts.trim().split(":").map((p) => parseInt(p, 10));
+  const parts = ts.trim().split(":").map((p) => parseFloat(p)); // দশমিক সেকেন্ডও চলে (যেমন 00:05.4)
   if (parts.some((p) => Number.isNaN(p))) return null;
   if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   if (parts.length === 2) return parts[0] * 60 + parts[1];
@@ -495,7 +495,7 @@ async function transcribeViaGemini(file, base64) {
 
 // স্ক্রিপ্ট বক্স থেকে শুধু লেখাগুলো নেয় (আগে থেকে টাইমস্ট্যাম্প থাকলে সেটা বাদ দিয়ে), ফাঁকা লাইন বাদ
 function scriptTextLines() {
-  const re = /^\d{1,2}:\d{2}(?::\d{2})?\s*-\s*\d{1,2}:\d{2}(?::\d{2})?\s*\|\s*(.*)$/;
+  const re = /^\d{1,2}:\d{2}(?:[.:]\d+)?\s*-\s*\d{1,2}:\d{2}(?:[.:]\d+)?\s*\|\s*(.*)$/;
   return $("#scriptInput")
     .value.split("\n")
     .map((l) => l.trim())
@@ -563,52 +563,125 @@ function findSilences(db, frameSec, thr, minSec) {
   return out;
 }
 
-// n টা লাইনের জন্য n-1 টা সীমানা লাগে: অডিওর ভেতরের নীরব অংশগুলোর মধ্যে সবচেয়ে লম্বা n-1 টা বেছে নেওয়া হয়।
-// (দৃশ্যের মাঝের ছোট বিরতি/শ্বাস এতে ভুল করে সীমানা হয়ে যায় না।)
+// ---- সীমানা বাছাই: লেখার দৈর্ঘ্য + বিরতির দৈর্ঘ্য দুটো মিলিয়ে ----
+// আগের পদ্ধতিতে "সবচেয়ে লম্বা n-1 টা বিরতি" নেওয়া হতো। কিন্তু লাইনগুলো ছোট ছোট বাক্যাংশ হলে (কমা পর্যন্ত) বিরতিগুলো প্রায় সমান
+// ছোট থাকে, তাই ভুল জায়গা বাছাই হয়ে সব সিন সরে যেত।
+// এখন: কথা বলার গতি মোটামুটি স্থির ধরে প্রতিটা লাইনের শেষ কোথায় হওয়ার কথা তা লেখার অক্ষর-অনুপাত থেকে আন্দাজ করা হয়,
+// তারপর ডায়নামিক প্রোগ্রামিং দিয়ে এমন বিরতিগুলো বাছা হয় যেগুলো আন্দাজের কাছাকাছি এবং যথাসম্ভব লম্বা।
 function alignScriptTimes(lines, loud) {
   const n = lines.length;
   const { db, frameSec } = loud;
   const total = db.length * frameSec;
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-  // কথার স্বাভাবিক জোর = সবচেয়ে জোরালো ১০% ফ্রেমের নিচের সীমা (p90)
   const sorted = Array.from(db).sort((a, b) => a - b);
   const p90 = sorted.length ? sorted[Math.floor(sorted.length * 0.9)] : -20;
-  // প্রথমে কড়া সীমা; বিরতি কম পেলে আরেকটু সংবেদনশীল করে আবার চেষ্টা
-  const attempts = [
-    { thr: clamp(p90 - 32, -60, -38), min: 0.25 },
-    { thr: clamp(p90 - 26, -55, -32), min: 0.12 },
-  ];
-  let interior = [];
-  for (const at of attempts) {
-    const sil = findSilences(db, frameSec, at.thr, at.min);
-    // শুরু ও শেষের নীরবতা সীমানা নয়
-    interior = sil.filter((q) => q.s > 0.05 && q.e < total - 0.05);
-    if (interior.length >= n - 1) break;
+  const thr = clamp(p90 - 30, -55, -36); // এর নিচে = নীরব
+  const MIN_PAUSE = 0.12; // এর চেয়ে ছোট থামা (শব্দের ভেতরের ফাঁক) ধরা হয় না
+
+  // কথা চলার সংখ্যা-তালিকা (prefix): cum[i] = i-তম ফ্রেমের আগে মোট কতটা কথার সময় পার হয়েছে
+  const cum = new Float32Array(db.length + 1);
+  let first = -1;
+  let last = -1;
+  for (let i = 0; i < db.length; i++) {
+    const sp = db[i] >= thr;
+    cum[i + 1] = cum[i] + (sp ? frameSec : 0);
+    if (sp) {
+      if (first < 0) first = i;
+      last = i;
+    }
   }
-  if (interior.length < n - 1) return { error: true, found: interior.length };
+  if (first < 0) return { error: true, found: 0 };
+  const tStart = first * frameSec;
+  const tEnd = (last + 1) * frameSec;
+  const speechTotal = cum[db.length];
 
-  const ranked = interior.map((q) => ({ ...q, len: q.e - q.s })).sort((a, b) => b.len - a.len);
-  const chosen = ranked.slice(0, n - 1).sort((a, b) => a.s - b.s);
-  const nextBest = ranked[n - 1];
-  const minChosen = chosen.reduce((m, q) => Math.min(m, q.len), Infinity);
-  // বাছাই করা সবচেয়ে ছোট বিরতি আর বাদ পড়া সবচেয়ে বড় বিরতি কাছাকাছি হলে সন্দেহ
-  const ambiguous = n > 1 && Boolean(nextBest) && minChosen < nextBest.len * 1.4;
+  // শুরু ও শেষের নীরবতা বাদ দিয়ে ভেতরের সব বিরতি = সম্ভাব্য সীমানা
+  const cands = findSilences(db, frameSec, thr, MIN_PAUSE)
+    .filter((q) => q.s > tStart + 0.05 && q.e < tEnd - 0.05)
+    .map((q) => ({ ...q, len: q.e - q.s, at: cum[Math.round(q.s / frameSec)] }));
+  if (cands.length < n - 1) return { error: true, found: cands.length };
 
-  // দৃশ্যের শুরু (সেকেন্ডে, পূর্ণসংখ্যা — অ্যাপের টাইমস্ট্যাম্প ফরম্যাট mm:ss)।
-  // বিরতির ভেতরের সবচেয়ে দেরির পূর্ণ সেকেন্ডে কাটা হয়, অর্থাৎ পরের কথা শুরুর ঠিক আগে; আগের দৃশ্য বিরতির সময়টুকু দেখায়।
+  let chosen = [];
+  if (n > 1) {
+    // প্রতিটা লাইনের অক্ষর-সংখ্যা থেকে "এই সীমানা কথার কত সেকেন্ড পরে হওয়ার কথা" আন্দাজ
+    const w = lines.map((l) => Math.max(1, [...l.replace(/\s+/g, "")].length));
+    const wTotal = w.reduce((a, b) => a + b, 0);
+    const target = [];
+    let acc = 0;
+    for (let i = 0; i < n - 1; i++) {
+      acc += w[i];
+      target.push((acc / wTotal) * speechTotal);
+    }
+    const SIG = Math.max(1.5, 0.03 * speechTotal); // আন্দাজের সহনশীলতা (সেকেন্ড)
+    const BONUS = 1.5; // লম্বা বিরতির জন্য পুরস্কার
+    const cost = (i, j) => {
+      const e = (cands[j].at - target[i]) / SIG;
+      return e * e - BONUS * Math.log(1 + cands[j].len / 0.15);
+    };
+    const M = cands.length;
+    const best = [];
+    const back = [];
+    for (let i = 0; i < n - 1; i++) {
+      best.push(new Float64Array(M).fill(Infinity));
+      back.push(new Int32Array(M).fill(-1));
+      let runMin = Infinity;
+      let runArg = -1;
+      for (let j = 0; j < M; j++) {
+        if (i === 0) best[i][j] = cost(i, j);
+        else {
+          // আগের সীমানা অবশ্যই এর আগের কোনো বিরতিতে (k < j)
+          if (j > 0 && best[i - 1][j - 1] < runMin) {
+            runMin = best[i - 1][j - 1];
+            runArg = j - 1;
+          }
+          if (runArg >= 0) {
+            best[i][j] = runMin + cost(i, j);
+            back[i][j] = runArg;
+          }
+        }
+      }
+    }
+    let bj = -1;
+    let bv = Infinity;
+    for (let j = 0; j < M; j++) {
+      if (best[n - 2][j] < bv) {
+        bv = best[n - 2][j];
+        bj = j;
+      }
+    }
+    if (bj < 0) return { error: true, found: cands.length };
+    const idx = [];
+    for (let i = n - 2; i >= 0; i--) {
+      idx.push(bj);
+      bj = back[i][bj];
+    }
+    chosen = idx.reverse().map((j) => cands[j]);
+  }
+  // খুব ছোট বিরতিতে সীমানা পড়লে (<0.25 সে) সেটা অনিশ্চিত — ব্যবহারকারীকে মিলিয়ে দেখতে বলা হয়
+  const weak = chosen.filter((q) => q.len < 0.25).length;
+
+  // দৃশ্যের শুরু (০.১ সেকেন্ড নির্ভুলতায়): বিরতির শেষ থেকে সামান্য আগে — পরের কথা শুরুর ঠিক আগে নতুন দৃশ্য আসে
+  const r1 = (v) => Math.round(v * 10) / 10;
   const starts = [0];
   let prev = 0;
   chosen.forEach((q) => {
-    const lo = Math.ceil(q.s);
-    const hi = Math.floor(q.e - 0.1);
-    let cut = hi >= lo ? hi : Math.round((q.s + q.e) / 2);
-    cut = Math.max(cut, prev + 1);
+    let cut = r1(q.e - Math.min(0.15, q.len / 2));
+    cut = Math.max(cut, r1(prev + 0.5));
     starts.push(cut);
     prev = cut;
   });
-  const end = Math.max(Math.ceil(total), prev + 1);
+  const end = Math.max(r1(total + 0.04), r1(prev + 0.5));
   const segments = lines.map((text, i) => ({ start: starts[i], end: i < n - 1 ? starts[i + 1] : end, text }));
-  return { segments, ambiguous };
+  return { segments, ambiguous: weak > 0, weak };
+}
+
+// ০.১ সেকেন্ড নির্ভুল সময় লেখা: পূর্ণ সেকেন্ড হলে "mm:ss", নইলে "mm:ss.d" (অ্যাপ দুটোই পড়তে পারে)
+function secToClockFine(sec) {
+  const v = Math.max(0, Math.round(sec * 10) / 10);
+  const mm = Math.floor(v / 60);
+  const ss = v - mm * 60;
+  const ssText = Number.isInteger(ss) ? String(ss).padStart(2, "0") : ss.toFixed(1).padStart(4, "0");
+  return `${String(mm).padStart(2, "0")}:${ssText}`;
 }
 
 async function alignFromScript(file, extraNotes = []) {
@@ -627,7 +700,7 @@ async function alignFromScript(file, extraNotes = []) {
       return false;
     }
     const segments = splitLongSegments(r.segments);
-    $("#scriptInput").value = segments.map((sg) => `${secToClock(sg.start)}-${secToClock(sg.end)} | ${sg.text.trim()}`).join("\n");
+    $("#scriptInput").value = segments.map((sg) => `${secToClockFine(sg.start)}-${secToClockFine(sg.end)} | ${sg.text.trim()}`).join("\n");
     const notes = [...extraNotes, { key: "alignReady", params: { n: lines.length } }];
     if (r.ambiguous) notes.push({ key: "alignAmbiguous" });
     setAudioNotes(notes);
