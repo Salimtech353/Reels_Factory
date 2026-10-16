@@ -563,11 +563,11 @@ function findSilences(db, frameSec, thr, minSec) {
   return out;
 }
 
-// ---- সীমানা বাছাই: লেখার দৈর্ঘ্য + বিরতির দৈর্ঘ্য দুটো মিলিয়ে ----
-// আগের পদ্ধতিতে "সবচেয়ে লম্বা n-1 টা বিরতি" নেওয়া হতো। কিন্তু লাইনগুলো ছোট ছোট বাক্যাংশ হলে (কমা পর্যন্ত) বিরতিগুলো প্রায় সমান
-// ছোট থাকে, তাই ভুল জায়গা বাছাই হয়ে সব সিন সরে যেত।
-// এখন: কথা বলার গতি মোটামুটি স্থির ধরে প্রতিটা লাইনের শেষ কোথায় হওয়ার কথা তা লেখার অক্ষর-অনুপাত থেকে আন্দাজ করা হয়,
-// তারপর ডায়নামিক প্রোগ্রামিং দিয়ে এমন বিরতিগুলো বাছা হয় যেগুলো আন্দাজের কাছাকাছি এবং যথাসম্ভব লম্বা।
+// ---- সীমানা বাছাই: লেখার দৈর্ঘ্য + বিরতির দৈর্ঘ্য দুটো মিলিয়ে, আর স্পষ্ট বিরতি না থাকলে লাইন জুড়ে দেওয়া ----
+// কথা বলার গতি মোটামুটি স্থির ধরে প্রতিটা লাইনের শেষ কোথায় হওয়ার কথা তা লেখার অক্ষর-অনুপাত থেকে আন্দাজ করা হয়।
+// তারপর ডায়নামিক প্রোগ্রামিং (DP) দিয়ে প্রতিটা লাইন-সীমানার জন্য হয় (ক) আন্দাজের কাছাকাছি একটা যথেষ্ট লম্বা বিরতি বাছা হয়,
+// নইলে (খ) সীমানাটা বাদ দিয়ে দুই লাইন জুড়ে একটা দৃশ্য করা হয় (যে লাইনের শেষে কণ্ঠে থামা নেই)।
+// শেষে ১.৫ সেকেন্ডের চেয়ে ছোট কোনো দৃশ্য থাকলে সেটাও পাশের দৃশ্যের সাথে জোড়া লাগে।
 function alignScriptTimes(lines, loud) {
   const n = lines.length;
   const { db, frameSec } = loud;
@@ -577,8 +577,9 @@ function alignScriptTimes(lines, loud) {
   const p90 = sorted.length ? sorted[Math.floor(sorted.length * 0.9)] : -20;
   const thr = clamp(p90 - 30, -55, -36); // এর নিচে = নীরব
   const MIN_PAUSE = 0.12; // এর চেয়ে ছোট থামা (শব্দের ভেতরের ফাঁক) ধরা হয় না
+  const MIN_SCENE = 1.5; // এর চেয়ে ছোট দৃশ্য রাখা হয় না (জুড়ে দেওয়া হয়)
 
-  // কথা চলার সংখ্যা-তালিকা (prefix): cum[i] = i-তম ফ্রেমের আগে মোট কতটা কথার সময় পার হয়েছে
+  // cum[i] = i-তম ফ্রেমের আগে মোট কতটা কথার সময় (সেকেন্ড) পার হয়েছে
   const cum = new Float32Array(db.length + 1);
   let first = -1;
   let last = -1;
@@ -590,7 +591,7 @@ function alignScriptTimes(lines, loud) {
       last = i;
     }
   }
-  if (first < 0) return { error: true, found: 0 };
+  if (first < 0) return { error: true };
   const tStart = first * frameSec;
   const tEnd = (last + 1) * frameSec;
   const speechTotal = cum[db.length];
@@ -599,11 +600,12 @@ function alignScriptTimes(lines, loud) {
   const cands = findSilences(db, frameSec, thr, MIN_PAUSE)
     .filter((q) => q.s > tStart + 0.05 && q.e < tEnd - 0.05)
     .map((q) => ({ ...q, len: q.e - q.s, at: cum[Math.round(q.s / frameSec)] }));
-  if (cands.length < n - 1) return { error: true, found: cands.length };
+  const M = cands.length;
 
-  let chosen = [];
-  if (n > 1) {
-    // প্রতিটা লাইনের অক্ষর-সংখ্যা থেকে "এই সীমানা কথার কত সেকেন্ড পরে হওয়ার কথা" আন্দাজ
+  // keep[i] = i-নম্বর লাইনের পর সীমানা রাখা হবে কিনা; bound[i] = সেই বিরতি
+  const keep = new Array(Math.max(0, n - 1)).fill(false);
+  const bound = new Array(Math.max(0, n - 1)).fill(null);
+  if (n > 1 && M > 0) {
     const w = lines.map((l) => Math.max(1, [...l.replace(/\s+/g, "")].length));
     const wTotal = w.reduce((a, b) => a + b, 0);
     const target = [];
@@ -614,65 +616,101 @@ function alignScriptTimes(lines, loud) {
     }
     const SIG = Math.max(1.5, 0.03 * speechTotal); // আন্দাজের সহনশীলতা (সেকেন্ড)
     const BONUS = 1.5; // লম্বা বিরতির জন্য পুরস্কার
-    const cost = (i, j) => {
-      const e = (cands[j].at - target[i]) / SIG;
-      return e * e - BONUS * Math.log(1 + cands[j].len / 0.15);
+    const SKIP = -1.6; // সীমানা বাদ দিয়ে জুড়ে দেওয়ার খরচ: বিরতি ছোট বা আন্দাজ থেকে দূরে হলে এটাই জেতে
+    const cost = (i, c) => {
+      const e = (cands[c].at - target[i]) / SIG;
+      return e * e - BONUS * Math.log(1 + cands[c].len / 0.15);
     };
-    const M = cands.length;
-    const best = [];
-    const back = [];
+    // অবস্থা s: 0 = এখনো কোনো বিরতি নেওয়া হয়নি, s = c+1 মানে সর্বশেষ নেওয়া বিরতি c
+    const S = M + 1;
+    let prev = new Float64Array(S).fill(Infinity);
+    prev[0] = 0;
+    const kinds = [];
+    const backs = [];
     for (let i = 0; i < n - 1; i++) {
-      best.push(new Float64Array(M).fill(Infinity));
-      back.push(new Int32Array(M).fill(-1));
+      const cur = new Float64Array(S).fill(Infinity);
+      const kind = new Uint8Array(S); // 0 = বাদ (জুড়ে দেওয়া), 1 = বিরতি নেওয়া
+      const back = new Int32Array(S).fill(-1);
+      for (let s = 0; s < S; s++) {
+        if (prev[s] < Infinity) {
+          cur[s] = prev[s] + SKIP;
+          back[s] = s;
+        }
+      }
       let runMin = Infinity;
       let runArg = -1;
-      for (let j = 0; j < M; j++) {
-        if (i === 0) best[i][j] = cost(i, j);
-        else {
-          // আগের সীমানা অবশ্যই এর আগের কোনো বিরতিতে (k < j)
-          if (j > 0 && best[i - 1][j - 1] < runMin) {
-            runMin = best[i - 1][j - 1];
-            runArg = j - 1;
-          }
-          if (runArg >= 0) {
-            best[i][j] = runMin + cost(i, j);
-            back[i][j] = runArg;
+      for (let c = 0; c < M; c++) {
+        if (prev[c] < runMin) {
+          runMin = prev[c];
+          runArg = c;
+        }
+        if (runArg >= 0) {
+          const v = runMin + cost(i, c);
+          if (v < cur[c + 1]) {
+            cur[c + 1] = v;
+            kind[c + 1] = 1;
+            back[c + 1] = runArg;
           }
         }
       }
+      kinds.push(kind);
+      backs.push(back);
+      prev = cur;
     }
-    let bj = -1;
+    let s = 0;
     let bv = Infinity;
-    for (let j = 0; j < M; j++) {
-      if (best[n - 2][j] < bv) {
-        bv = best[n - 2][j];
-        bj = j;
+    for (let x = 0; x < S; x++) {
+      if (prev[x] < bv) {
+        bv = prev[x];
+        s = x;
       }
     }
-    if (bj < 0) return { error: true, found: cands.length };
-    const idx = [];
     for (let i = n - 2; i >= 0; i--) {
-      idx.push(bj);
-      bj = back[i][bj];
+      if (kinds[i][s] === 1) {
+        keep[i] = true;
+        bound[i] = cands[s - 1];
+      }
+      s = backs[i][s];
     }
-    chosen = idx.reverse().map((j) => cands[j]);
   }
-  // খুব ছোট বিরতিতে সীমানা পড়লে (<0.25 সে) সেটা অনিশ্চিত — ব্যবহারকারীকে মিলিয়ে দেখতে বলা হয়
-  const weak = chosen.filter((q) => q.len < 0.25).length;
 
-  // দৃশ্যের শুরু (০.১ সেকেন্ড নির্ভুলতায়): বিরতির শেষ থেকে সামান্য আগে — পরের কথা শুরুর ঠিক আগে নতুন দৃশ্য আসে
+  // রাখা সীমানাগুলো থেকে দৃশ্য বানানো; দৃশ্যের শুরু ০.১ সেকেন্ড নির্ভুলতায়, পরের কথা শুরুর ঠিক আগে
   const r1 = (v) => Math.round(v * 10) / 10;
-  const starts = [0];
-  let prev = 0;
-  chosen.forEach((q) => {
-    let cut = r1(q.e - Math.min(0.15, q.len / 2));
-    cut = Math.max(cut, r1(prev + 0.5));
-    starts.push(cut);
-    prev = cut;
+  let groups = []; // প্রতিটা দৃশ্য = লেখা + তার পরের সীমানা (বিরতি)
+  let curText = [];
+  lines.forEach((text, i) => {
+    curText.push(text);
+    if (i === n - 1 || keep[i]) {
+      groups.push({ text: curText.join(" "), pause: i === n - 1 ? null : bound[i] });
+      curText = [];
+    }
   });
-  const end = Math.max(r1(total + 0.04), r1(prev + 0.5));
-  const segments = lines.map((text, i) => ({ start: starts[i], end: i < n - 1 ? starts[i + 1] : end, text }));
-  return { segments, ambiguous: weak > 0, weak };
+  const timesOf = (gs) => {
+    const st = [0];
+    let prevCut = 0;
+    for (let i = 0; i < gs.length - 1; i++) {
+      const q = gs[i].pause;
+      let cut = r1(q.e - Math.min(0.15, q.len / 2));
+      cut = Math.max(cut, r1(prevCut + 0.5));
+      st.push(cut);
+      prevCut = cut;
+    }
+    const end = Math.max(r1(total + 0.04), r1(prevCut + 0.5));
+    return gs.map((g, i) => ({ start: st[i], end: i < gs.length - 1 ? st[i + 1] : end, text: g.text }));
+  };
+  // খুব ছোট (<MIN_SCENE) দৃশ্য পাশের দৃশ্যের সাথে জোড়া — যে পাশের বিরতি ছোট সেদিকে
+  for (;;) {
+    const ts = timesOf(groups);
+    const k = ts.findIndex((sg) => sg.end - sg.start < MIN_SCENE);
+    if (k < 0 || groups.length === 1) break;
+    let m; // কোন সীমানা তুলে দেব (m আর m+1 জুড়বে)
+    if (k === 0) m = 0;
+    else if (k === groups.length - 1) m = k - 1;
+    else m = groups[k - 1].pause.len <= groups[k].pause.len ? k - 1 : k;
+    groups.splice(m, 2, { text: groups[m].text + " " + groups[m + 1].text, pause: groups[m + 1].pause });
+  }
+  const segments = timesOf(groups);
+  return { segments, merged: n - segments.length };
 }
 
 // ০.১ সেকেন্ড নির্ভুল সময় লেখা: পূর্ণ সেকেন্ড হলে "mm:ss", নইলে "mm:ss.d" (অ্যাপ দুটোই পড়তে পারে)
@@ -696,13 +734,13 @@ async function alignFromScript(file, extraNotes = []) {
     const loud = await audioLoudnessFrames(file);
     const r = alignScriptTimes(lines, loud);
     if (r.error) {
-      setAudioNotes([{ key: "alignFew", params: { lines: lines.length, need: lines.length - 1, gaps: r.found } }], true);
+      setAudioNotes([{ key: "alignNoSpeech" }], true);
       return false;
     }
     const segments = splitLongSegments(r.segments);
     $("#scriptInput").value = segments.map((sg) => `${secToClockFine(sg.start)}-${secToClockFine(sg.end)} | ${sg.text.trim()}`).join("\n");
-    const notes = [...extraNotes, { key: "alignReady", params: { n: lines.length } }];
-    if (r.ambiguous) notes.push({ key: "alignAmbiguous" });
+    const notes = [...extraNotes, { key: "alignReady", params: { n: r.segments.length } }];
+    if (r.merged > 0) notes.push({ key: "alignMerged", params: { lines: lines.length, merged: r.merged, n: r.segments.length } });
     setAudioNotes(notes);
     return true;
   } catch (e) {
