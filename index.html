@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Galada&family=Atma:wght@400&family=Mina:wght@400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261001" />
+<link rel="stylesheet" href="style.css?v=20261030" />
 </head>
 <body data-step="2">
 
@@ -263,6 +263,21 @@
           <button type="button" class="btn btn-secondary" id="copyLinkBtn" data-i18n="copyLink"></button>
           <button type="button" class="btn btn-ghost" id="createAnotherBtn" data-i18n="createAnother"></button>
         </div>
+
+        <div class="pub-box" id="pubBox">
+          <h3 class="pub-title" data-i18n="pubTitle"></h3>
+          <p class="hint" data-i18n="pubHint"></p>
+          <div class="pub-tabs">
+            <button type="button" class="btn btn-secondary pub-tab" data-pf="youtube">YouTube</button>
+            <button type="button" class="btn btn-secondary pub-tab" data-pf="facebook">Facebook Reels</button>
+            <button type="button" class="btn btn-secondary pub-tab" data-pf="tiktok">TikTok</button>
+          </div>
+          <div id="pubActions" hidden>
+            <button type="button" class="btn btn-ghost" id="pubCopyAll" data-i18n="pubCopyAll"></button>
+            <button type="button" class="btn btn-ghost" id="pubRegen" data-i18n="pubRegen"></button>
+          </div>
+          <div id="pubOut"></div>
+        </div>
       </div>
     </section>
 
@@ -369,6 +384,6 @@
 </div>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
-<script type="module" src="app.js?v=20261011"></script>
+<script type="module" src="app.js?v=20261030"></script>
 </body>
 </html>

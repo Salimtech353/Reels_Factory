@@ -4,7 +4,7 @@
 // শুধু Groq/OpenRouter/Pexels/Pixabay API প্রক্সি করার জন্য ব্যবহৃত হয়।
 // ============================================================
 
-import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261015";
+import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261030";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -1613,6 +1613,293 @@ async function buildViaGithub(buildBtn) {
     buildBtn.disabled = false;
   }
 }
+
+// ============================================================
+// প্রকাশের তথ্য তৈরি: YouTube / Facebook Reels / TikTok
+// স্ক্রিপ্ট (state.segments) থেকে AI দিয়ে শিরোনাম, বর্ণনা, ট্যাগ, হ্যাশট্যাগ ইত্যাদি বানায়।
+// কোনো সার্ভার লাগে না — ব্রাউজার থেকে সরাসরি Gemini → Groq → OpenRouter (যে চাবি আছে সেই ক্রমে) ডাকা হয়।
+// চ্যাপ্টারের সময় AI-এর আন্দাজ নয়, দৃশ্যের আসল সময় (startSec) থেকে বসানো হয়।
+// ============================================================
+const CHANNEL_NAME = "Time Trails";
+const CHANNEL_ABOUT = "ঐতিহাসিক স্থান ও বস্তুর গল্প";
+const PUB = { platform: null, cache: {}, sig: "", fields: [], busy: false };
+
+const pubEsc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pubSig = () => state.segments.map((s) => s.text).join("\n");
+
+// চ্যাপ্টারের সময় লেখা: 00:00 বা 1:02:03
+function fmtChapterTime(sec) {
+  const v = Math.max(0, Math.floor(sec));
+  const h = Math.floor(v / 3600);
+  const m = Math.floor((v % 3600) / 60);
+  const s = v % 60;
+  const mm = String(m).padStart(h ? 2 : 2, "0");
+  return h ? `${h}:${mm}:${String(s).padStart(2, "0")}` : `${mm}:${String(s).padStart(2, "0")}`;
+}
+
+// AI-র দেওয়া চ্যাপ্টার তালিকা থেকে ইউটিউব-নিয়ম মেনে চ্যাপ্টার ব্লক:
+// প্রথমটা 00:00 হতে হবে, কমপক্ষে ৩টা, পরপর দুটোর মাঝে ≥১০ সেকেন্ড
+function buildChapters(chs, segments) {
+  const list = (Array.isArray(chs) ? chs : [])
+    .map((c) => ({ i: Number(c.scene) - 1, title: String(c.title || "").trim() }))
+    .filter((c) => Number.isInteger(c.i) && c.i >= 0 && c.i < segments.length && c.title)
+    .sort((a, b) => a.i - b.i);
+  if (!list.length || list[0].i !== 0) list.unshift({ i: 0, title: "ভূমিকা" });
+  const out = [];
+  for (const c of list) {
+    const ts = segments[c.i].startSec;
+    if (out.length && (ts - out[out.length - 1].t < 10 || c.i === out[out.length - 1].i)) continue;
+    out.push({ i: c.i, t: ts, title: c.title });
+  }
+  if (out.length < 3) return "";
+  out[0].t = 0;
+  return out.map((c) => `${fmtChapterTime(c.t)} ${c.title}`).join("\n");
+}
+
+// ট্যাগ: ডুপ্লিকেট বাদ, মোট ৪৮০ অক্ষরের মধ্যে (ইউটিউবের সীমা ৫০০)
+function cleanTags(tags) {
+  const seen = new Set();
+  const out = [];
+  let len = 0;
+  for (const raw of Array.isArray(tags) ? tags : []) {
+    const tg = String(raw).replace(/^#/, "").trim();
+    const key = tg.toLowerCase();
+    if (!tg || seen.has(key)) continue;
+    if (len + tg.length + 1 > 480) break;
+    seen.add(key);
+    out.push(tg);
+    len += tg.length + 1;
+  }
+  return out;
+}
+
+// হ্যাশট্যাগ: # দিয়ে শুরু, ভেতরে ফাঁকা নেই, সর্বোচ্চ max টা
+function cleanHashtags(tags, max) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(tags) ? tags : []) {
+    const tg = "#" + String(raw).replace(/^#+/, "").replace(/[\s#]+/g, "");
+    if (tg.length < 2 || seen.has(tg.toLowerCase())) continue;
+    seen.add(tg.toLowerCase());
+    out.push(tg);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function pubPrompt(platform) {
+  const scenes = state.segments.map((s, i) => `${i + 1}. [${fmtChapterTime(s.startSec)}] ${s.text}`).join("\n");
+  const common =
+    `You write publishing metadata in Bangla (Bengali) for the YouTube channel "${CHANNEL_NAME}", which makes short videos about historical places and objects.\n` +
+    `STRICT RULES: use ONLY facts that appear in the script below; never invent numbers, dates, names or claims; keep every place name spelled exactly as in the script; ` +
+    `natural, engaging Bangla; no misleading clickbait; no emojis in titles. Reply with ONE valid JSON object and nothing else.\n\n` +
+    `SCRIPT (scene number, start time, text):\n${scenes}\n\n`;
+  if (platform === "youtube")
+    return (
+      common +
+      `Return JSON with exactly these keys:\n` +
+      `"titles": array of 5 different Bangla titles, each at most 60 characters (curiosity, direct-fact, question styles; put the main place/subject near the start),\n` +
+      `"description": Bangla text. First two lines = a strong hook that also contains the main keywords. Then 2-4 short paragraphs summarizing the video. No hashtags, no timestamps, no channel footer,\n` +
+      `"chapters": array of 6-10 objects {"scene": <scene number from the script, ascending, first must be 1>, "title": <Bangla, at most 5 words>},\n` +
+      `"tags": array of 15-20 YouTube tags (mix Bangla and English; include the place name, history, Bangladesh, travel, etc.),\n` +
+      `"hashtags": array of 3-5 hashtags,\n` +
+      `"pinnedComment": one friendly Bangla question to start discussion,\n` +
+      `"thumbnailTexts": array of 3 Bangla thumbnail texts, 2-4 words each,\n` +
+      `"category": the best YouTube category name in English.`
+    );
+  if (platform === "facebook")
+    return (
+      common +
+      `This is for a Facebook Reel. Return JSON with exactly these keys:\n` +
+      `"caption": Bangla caption: first line is a short hook, then 2-4 short lines, light use of emojis, ends with a question to the audience. No hashtags inside,\n` +
+      `"hashtags": array of 3-5 hashtags,\n` +
+      `"firstComment": a short Bangla first comment from the page,\n` +
+      `"hookTexts": array of 3 on-screen hook lines (Bangla, at most 8 words each).`
+    );
+  return (
+    common +
+    `This is for TikTok. Return JSON with exactly these keys:\n` +
+    `"hookTexts": array of 3 on-screen hook lines for the first 2 seconds (Bangla, at most 7 words each),\n` +
+    `"caption": Bangla caption of at most 150 characters, no hashtags inside,\n` +
+    `"hashtags": array of 4-6 hashtags mixing broad ones (e.g. #history #bangladesh) and niche ones for this place,\n` +
+    `"coverText": a short Bangla cover-image text (2-4 words).`
+  );
+}
+
+function extractJson(text) {
+  const s = String(text || "").trim().replace(/^```(?:json)?/i, "").replace(/```\s*$/, "").trim();
+  const a = s.indexOf("{");
+  const b = s.lastIndexOf("}");
+  if (a < 0 || b <= a) throw new Error(t("pubBadJson"));
+  return JSON.parse(s.slice(a, b + 1));
+}
+
+async function llmGemini(prompt) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TR_MODEL}:generateContent?key=${encodeURIComponent(state.keys.geminiTranscribe)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.7 } }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error(t("pubBadJson"));
+  return extractJson(text);
+}
+
+// OpenAI-সামঞ্জস্যপূর্ণ API (Groq, OpenRouter) — মডেলের তালিকা একে একে চেষ্টা
+async function llmChat(url, key, models, prompt, jsonMode, extraHeaders = {}) {
+  let lastErr = null;
+  for (const model of models) {
+    try {
+      const body = { model, temperature: 0.7, messages: [{ role: "user", content: prompt }] };
+      if (jsonMode) body.response_format = { type: "json_object" };
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, ...extraHeaders },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+      const text = data?.choices?.[0]?.message?.content;
+      if (!text) throw new Error(t("pubBadJson"));
+      return extractJson(text);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error(t("pubBadJson"));
+}
+
+async function generatePublishJson(prompt) {
+  const errs = [];
+  if (state.keys.geminiTranscribe) {
+    try {
+      return await llmGemini(prompt);
+    } catch (e) {
+      errs.push("Gemini: " + e.message);
+    }
+  }
+  if (state.keys.groq) {
+    try {
+      return await llmChat("https://api.groq.com/openai/v1/chat/completions", state.keys.groq, ["openai/gpt-oss-120b", "llama-3.1-8b-instant"], prompt, true);
+    } catch (e) {
+      errs.push("Groq: " + e.message);
+    }
+  }
+  if (state.keys.openrouter) {
+    try {
+      return await llmChat("https://openrouter.ai/api/v1/chat/completions", state.keys.openrouter, ["google/gemini-2.5-flash", "meta-llama/llama-3.3-70b-instruct:free"], prompt, false, { "X-Title": "Reels Factory" });
+    } catch (e) {
+      errs.push("OpenRouter: " + e.message);
+    }
+  }
+  throw new Error(errs.length ? errs.join(" | ") : t("pubNoKey"));
+}
+
+const asList = (v) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
+
+// AI-র JSON থেকে দেখানোর ঘরগুলো বানানো (প্ল্যাটফর্ম অনুযায়ী)
+function pubFieldsFrom(platform, j) {
+  const f = [];
+  if (platform === "youtube") {
+    const titles = asList(j.titles).slice(0, 5);
+    f.push({ label: t("pfTitles"), value: titles.join("\n"), meta: titles.map((x) => [...x].length).join(" · ") + " " + t("pubChars") });
+    const chapters = buildChapters(j.chapters, state.segments);
+    const hashtags = cleanHashtags(j.hashtags, 5);
+    const footer = `🔔 ${t("pubFooterCta")} — ${CHANNEL_NAME}\n📍 ${CHANNEL_ABOUT}`;
+    const desc = [String(j.description || "").trim(), chapters, footer, hashtags.join(" ")].filter(Boolean).join("\n\n");
+    f.push({ label: t("pfDescription"), value: desc, meta: chapters ? t("pubWithChapters") : t("pubNoChapters") });
+    f.push({ label: t("pfTags"), value: cleanTags(j.tags).join(", "), meta: "" });
+    f.push({ label: t("pfHashtags"), value: hashtags.join(" "), meta: "" });
+    f.push({ label: t("pfPinned"), value: String(j.pinnedComment || "").trim(), meta: "" });
+    f.push({ label: t("pfThumb"), value: asList(j.thumbnailTexts).slice(0, 3).join("\n"), meta: "" });
+    f.push({ label: t("pfCategory"), value: String(j.category || "").trim(), meta: "" });
+  } else if (platform === "facebook") {
+    const hashtags = cleanHashtags(j.hashtags, 5);
+    f.push({ label: t("pfCaption"), value: [String(j.caption || "").trim(), hashtags.join(" ")].filter(Boolean).join("\n\n"), meta: "" });
+    f.push({ label: t("pfFirstComment"), value: String(j.firstComment || "").trim(), meta: "" });
+    f.push({ label: t("pfHooks"), value: asList(j.hookTexts).slice(0, 3).join("\n"), meta: "" });
+  } else {
+    const hashtags = cleanHashtags(j.hashtags, 6);
+    const cap = [String(j.caption || "").trim(), hashtags.join(" ")].filter(Boolean).join(" ");
+    f.push({ label: t("pfCaption"), value: cap, meta: [...cap].length + " " + t("pubChars") });
+    f.push({ label: t("pfHooks"), value: asList(j.hookTexts).slice(0, 3).join("\n"), meta: "" });
+    f.push({ label: t("pfCover"), value: String(j.coverText || "").trim(), meta: "" });
+  }
+  return f.filter((x) => x.value);
+}
+
+function pubRender() {
+  const out = $("#pubOut");
+  out.innerHTML =
+    PUB.fields
+      .map(
+        (f, i) =>
+          `<div class="pub-field"><div class="pub-field-head"><b>${pubEsc(f.label)}</b><span class="pub-meta">${pubEsc(f.meta || "")}</span>` +
+          `<button type="button" class="btn btn-ghost pub-copy" data-i="${i}">${pubEsc(t("pubCopy"))}</button></div><pre class="pub-text">${pubEsc(f.value)}</pre></div>`
+      )
+      .join("") +
+    `<p class="hint">${pubEsc(t("pubReview"))}</p>`;
+  $("#pubActions").hidden = false;
+}
+
+async function pubCopy(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+  toast(t("pubCopied"));
+}
+
+async function pubGenerate(platform, force = false) {
+  if (PUB.busy) return;
+  if (!state.segments.length) {
+    toast(t("pubNoScript"), "err");
+    return;
+  }
+  const sig = pubSig();
+  if (sig !== PUB.sig) {
+    PUB.cache = {};
+    PUB.sig = sig;
+  }
+  PUB.platform = platform;
+  $$(".pub-tab").forEach((b) => b.classList.toggle("active", b.dataset.pf === platform));
+  if (PUB.cache[platform] && !force) {
+    PUB.fields = PUB.cache[platform];
+    pubRender();
+    return;
+  }
+  PUB.busy = true;
+  $("#pubActions").hidden = true;
+  $("#pubOut").innerHTML = `<p class="hint">⏳ ${pubEsc(t("pubGenerating"))}</p>`;
+  try {
+    const json = await generatePublishJson(pubPrompt(platform));
+    PUB.fields = pubFieldsFrom(platform, json);
+    if (!PUB.fields.length) throw new Error(t("pubBadJson"));
+    PUB.cache[platform] = PUB.fields;
+    pubRender();
+  } catch (e) {
+    $("#pubOut").innerHTML = `<p class="hint" style="color:#E8A33D;">${pubEsc(t("pubFail", { msg: e.message }))}</p>`;
+  } finally {
+    PUB.busy = false;
+  }
+}
+
+$$(".pub-tab").forEach((b) => b.addEventListener("click", () => pubGenerate(b.dataset.pf)));
+$("#pubRegen").addEventListener("click", () => PUB.platform && pubGenerate(PUB.platform, true));
+$("#pubCopyAll").addEventListener("click", () => pubCopy(PUB.fields.map((f) => `${f.label}\n${f.value}`).join("\n\n")));
+$("#pubOut").addEventListener("click", (e) => {
+  const btn = e.target.closest(".pub-copy");
+  if (btn) pubCopy(PUB.fields[Number(btn.dataset.i)].value);
+});
 
 // ---------- recent renders list ----------
 const RECENT_KEY = "rk_recent_renders";

@@ -381,3 +381,16 @@ textarea{line-height:1.75}
 /* Kolpona (কল্পনা) caption font — used for the live preview */
 @font-face{font-family:"Kolpona";src:url("https://raw.githubusercontent.com/Salimtech353/Reels_Factory/main/File/Kolpona_Unicode.ttf") format("truetype");font-display:swap}
 @font-face{font-family:"Kolpona Italic";src:url("https://raw.githubusercontent.com/Salimtech353/Reels_Factory/main/File/Kolpona_Unicode%20Italic.ttf") format("truetype");font-display:swap}
+
+/* ---------- প্রকাশের তথ্য (YouTube / Facebook Reels / TikTok) ---------- */
+.pub-box{margin-top:28px;border-top:1px solid var(--line);padding-top:20px}
+.pub-title{font-size:18px;margin:0 0 4px}
+.pub-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}
+.pub-tab.active{background:var(--amber);border-color:var(--amber);color:#1a1a1a}
+#pubActions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.pub-field{margin-bottom:14px}
+.pub-field-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.pub-field-head b{font-size:15px}
+.pub-meta{color:var(--text-dim);font-size:12px;flex:1}
+.pub-copy{padding:4px 12px;font-size:13px}
+.pub-text{white-space:pre-wrap;word-break:break-word;font-family:inherit;margin:0;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:14px;line-height:1.65}
