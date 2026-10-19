@@ -4,7 +4,7 @@
 // শুধু Groq/OpenRouter/Pexels/Pixabay API প্রক্সি করার জন্য ব্যবহৃত হয়।
 // ============================================================
 
-import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261030";
+import { t, getLang, setLang, applyI18n, onLangChange } from "./i18n.js?v=20261050";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -183,9 +183,11 @@ function mediaTag(src, type, cls = "") {
 }
 
 function renderSegments() {
+  scheduleSave();
   const list = $("#segmentsList");
   list.innerHTML = "";
   state.segments.forEach((seg, idx) => {
+    if (seg.media) seg.warn = "";
     const st = segStatus(seg);
     const row = document.createElement("article");
     row.className = "segment scene st-" + st;
@@ -208,6 +210,7 @@ function renderSegments() {
         <div class="segment-media" role="button" tabindex="0" aria-label="${t("pickMediaAria")}">${preview}</div>
         <div class="scene-info">
           <p class="segment-text">${escapeHtml(seg.text)}</p>
+          ${seg.warn ? `<p class="warn-red">⚠ ${escapeHtml(seg.warn)}</p>` : ""}
           <label class="q-label">${t("qLabel")} ${seg.entity ? `<span class="chip entity">${escapeHtml(seg.entity)}</span>` : ""}</label>
           <input type="text" class="query-input" readonly value="${escapeAttr(seg.query)}" placeholder="${t("queryPlaceholder")}" />
           <div class="scene-actions">
@@ -741,7 +744,7 @@ async function alignFromScript(file, extraNotes = []) {
     $("#scriptInput").value = segments.map((sg) => `${secToClockFine(sg.start)}-${secToClockFine(sg.end)} | ${sg.text.trim()}`).join("\n");
     const notes = [...extraNotes, { key: "alignReady", params: { n: r.segments.length } }];
     if (r.merged > 0) notes.push({ key: "alignMerged", params: { lines: lines.length, merged: r.merged, n: r.segments.length } });
-    setAudioNotes(notes);
+    setAudioNotes(notes, extraNotes.length > 0 || r.merged > 0); // সতর্কতা থাকলে লাল
     return true;
   } catch (e) {
     setAudioNotes([{ key: "trFail", params: { msg: e.message } }], true);
@@ -845,6 +848,7 @@ $("#analyzeBtn").addEventListener("click", async () => {
   analyzeBtn.disabled = true;
   analyzeBtn.classList.add("loading");
   state.segments = segments;
+  await ensureProject(); // এই ভিডিওর প্রজেক্ট তৈরি — এরপর সব কিছু নিজে থেকে সেভ হয়
   setMsg(statusEl, { key: "analyzing", params: { n: segments.length } }, "status-line");
   markStepActive(3);
 
@@ -880,7 +884,7 @@ $("#analyzeBtn").addEventListener("click", async () => {
     const msgParts = [{ key: "analyzeDone" }];
     if (data.provider === "openrouter") msgParts.push({ key: "viaOpenRouter", params: { model: data.model || "" } });
     if (data.fallbackUsed) msgParts.push({ key: "fallbackUsedWarning" });
-    setMsg(statusEl, msgParts, data.fallbackUsed ? "status-line" : "status-line ok");
+    setMsg(statusEl, msgParts, data.fallbackUsed ? "status-line err" : "status-line ok");
     $("#panelBuild").hidden = false;
 
     // auto-search top query for every segment
@@ -1886,6 +1890,7 @@ async function pubGenerate(platform, force = false) {
     if (!PUB.fields.length) throw new Error(t("pubBadJson"));
     PUB.cache[platform] = PUB.fields;
     pubRender();
+    scheduleSave();
   } catch (e) {
     $("#pubOut").innerHTML = `<p class="hint" style="color:#E8A33D;">${pubEsc(t("pubFail", { msg: e.message }))}</p>`;
   } finally {
@@ -1901,6 +1906,393 @@ $("#pubOut").addEventListener("click", (e) => {
   if (btn) pubCopy(PUB.fields[Number(btn.dataset.i)].value);
 });
 
+// ============================================================
+// প্রজেক্ট সেভ (ব্রাউজারের IndexedDB) — প্রতিটা ভিডিওর সব তথ্য ও ফাইল
+// • ফোন থেকে বাছা অডিও/মিউজিক/আপলোড/AI ছবির কপি ব্রাউজারেই রাখা হয় (কোনো সার্ভারে যায় না),
+//   তাই আসল ফাইল ফোন থেকে মুছে ফেললেও প্রজেক্ট খুললে সব থাকে।
+// • সর্বশেষ PROJ_MAX টা প্রজেক্ট রাখা হয়; নতুনটা এলে সবচেয়ে পুরনোটা সরে যায়।
+// • সেভ হয় নিজে থেকে (বিশ্লেষণ, মিডিয়া বদল, সেটিংস, স্ক্রিপ্ট/অডিও বদল, রেন্ডার) — আপনাকে কিছু চাপতে হয় না।
+// • Recent Renders-এ "Open" চাপলে প্রজেক্ট সব তথ্যসহ "Audio and Script" ধাপে খোলে, নতুন করে বিশ্লেষণ/সার্চ হয় না।
+// ============================================================
+const PROJ_MAX = 20;
+const SAVED = new WeakSet(); // যে ফাইল-অবজেক্ট ইতিমধ্যে স্টোরেজে লেখা হয়েছে
+let RECENT_ITEMS = [];
+
+let _dbPromise = null;
+function idb() {
+  if (!_dbPromise) {
+    _dbPromise = new Promise((resolve, reject) => {
+      if (!window.indexedDB) return reject(new Error("IndexedDB unsupported"));
+      const rq = indexedDB.open("reels-factory", 1);
+      rq.onupgradeneeded = () => {
+        const db = rq.result;
+        db.createObjectStore("projects", { keyPath: "id" }); // প্রজেক্টের তথ্য
+        db.createObjectStore("files"); // ফাইল (Blob): কী = "<প্রজেক্ট>:audio" / ":music" / ":seg:<দৃশ্য>"
+      };
+      rq.onsuccess = () => resolve(rq.result);
+      rq.onerror = () => reject(rq.error);
+    });
+  }
+  return _dbPromise;
+}
+async function idbDo(store, mode, fn) {
+  const db = await idb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, mode);
+    const req = fn(tx.objectStore(store));
+    tx.oncomplete = () => resolve(req ? req.result : undefined);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+const idbPut = (store, val, key) => idbDo(store, "readwrite", (st) => (key === undefined ? st.put(val) : st.put(val, key)));
+const idbGet = (store, key) => idbDo(store, "readonly", (st) => st.get(key));
+const idbDel = (store, key) => idbDo(store, "readwrite", (st) => st.delete(key));
+const idbAll = (store) => idbDo(store, "readonly", (st) => st.getAll());
+const idbKeysWithPrefix = (prefix) => idbDo("files", "readonly", (st) => st.getAllKeys(IDBKeyRange.bound(prefix, prefix + "\uffff")));
+
+let _warnedStorage = false;
+function storageWarn() {
+  if (_warnedStorage) return;
+  _warnedStorage = true;
+  toast(t("projSaveFail"), "err");
+}
+
+// ---- প্রজেক্ট তৈরি / মোছা ----
+async function deleteProject(id) {
+  try {
+    const keys = await idbKeysWithPrefix(id + ":");
+    for (const k of keys) await idbDel("files", k);
+    await idbDel("projects", id);
+  } catch (_) {}
+  if (state.projectId === id) state.projectId = null;
+}
+
+async function ensureProject() {
+  if (state.projectId) return;
+  try {
+    const all = await idbAll("projects");
+    all.sort((a, b) => a.ts - b.ts);
+    while (all.length >= PROJ_MAX) await deleteProject(all.shift().id); // সবচেয়ে পুরনোটা সরে যায়
+    state.projectId = "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    state.projectCreated = Date.now();
+    state.video = null;
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); // ব্রাউজার যেন সহজে না মোছে
+  } catch (_) {
+    state.projectId = null;
+    storageWarn();
+  }
+}
+
+// ---- প্রজেক্টের অবস্থা (JSON) ----
+const SETTING_IDS = ["aspectSelect", "resSelect", "captionToggle", "captionFontSelect", "captionSizeSelect", "captionColorSelect", "captionAnimSelect", "overlaySel", "endSel", "musicVol", "musicDuckVol"];
+function snapshotSettings() {
+  const o = {};
+  SETTING_IDS.forEach((id) => {
+    const el = $("#" + id);
+    o[id] = el.type === "checkbox" ? el.checked : el.value;
+  });
+  return o;
+}
+function serializeSegments() {
+  return state.segments.map((seg) => {
+    const { media, ...rest } = seg;
+    const copy = JSON.parse(JSON.stringify(rest));
+    if (copy.status === "searching") copy.status = media ? "ready" : "attention";
+    copy.media = media
+      ? media.source === "upload"
+        ? { source: "upload", type: media.type, duration: media.duration || null }
+        : JSON.parse(JSON.stringify(media))
+      : null;
+    return copy;
+  });
+}
+async function smallThumb(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const w = 160;
+    const h = Math.round((bmp.height / bmp.width) * w) || 90;
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    c.getContext("2d").drawImage(bmp, 0, 0, w, h);
+    return c.toDataURL("image/jpeg", 0.7);
+  } catch (_) {
+    return "";
+  }
+}
+
+let _saveChain = Promise.resolve();
+function scheduleSave() {
+  if (!state.projectId || state.restoring) return;
+  clearTimeout(state._saveT);
+  state._saveT = setTimeout(() => {
+    _saveChain = _saveChain.then(saveProjectNow).catch(() => {});
+  }, 500);
+}
+
+async function saveProjectNow() {
+  if (!state.projectId || state.restoring) return;
+  const pid = state.projectId;
+  try {
+    // ১) ফাইল: নতুন/বদলানোগুলো লেখা, আর বাদ পড়া ফাইল মোছা
+    const want = new Map();
+    if (state.audioFile) want.set(`${pid}:audio`, state.audioFile);
+    if (state.bgMusicFile) want.set(`${pid}:music`, state.bgMusicFile);
+    state.segments.forEach((seg) => {
+      if (seg.media && seg.media.source === "upload" && seg.media.file) want.set(`${pid}:seg:${seg.id}`, seg.media.file);
+    });
+    for (const [key, file] of want) {
+      if (!SAVED.has(file)) {
+        await idbPut("files", file, key);
+        SAVED.add(file);
+      }
+    }
+    for (const k of await idbKeysWithPrefix(pid + ":")) if (!want.has(k)) await idbDel("files", k);
+
+    // ২) প্রজেক্টের তথ্য
+    const first = state.segments[0];
+    let thumb = state.projectThumb || "";
+    if (first && first.media) {
+      if (first.media.source !== "upload") thumb = first.media.thumb || thumb;
+      else if (first.media.type === "photo" && first.media.file && state.projectThumbFor !== first.media.file) {
+        thumb = (await smallThumb(first.media.file)) || thumb;
+        state.projectThumbFor = first.media.file;
+      }
+    }
+    state.projectThumb = thumb;
+    await idbPut("projects", {
+      id: pid,
+      created: state.projectCreated || Date.now(),
+      ts: Date.now(),
+      scriptText: $("#scriptInput").value,
+      audioInfo: state.audioInfo || null,
+      hasAudio: Boolean(state.audioFile),
+      musicName: state.bgMusicFile ? state.bgMusicFile.name : "",
+      segments: serializeSegments(),
+      settings: snapshotSettings(),
+      video: state.video || null,
+      pub: { sig: PUB.sig, cache: PUB.cache },
+      steps: { done: [...wiz.done], max: wiz.max },
+      title: first ? String(first.text).slice(0, 60) : "",
+      dur: state.segments.length ? Math.max(...state.segments.map((x) => x.endSec)) : 0,
+      count: state.segments.length,
+      thumb,
+    });
+    refreshRecentItems();
+  } catch (_) {
+    storageWarn();
+  }
+}
+
+// ---- প্রজেক্ট খোলা (Open) ----
+function setControl(id, v, evt) {
+  const el = $("#" + id);
+  if (v === undefined || v === null) return;
+  if (el.type === "checkbox") el.checked = Boolean(v);
+  else el.value = v;
+  if (evt) el.dispatchEvent(new Event(evt, { bubbles: true }));
+}
+
+async function openProject(id) {
+  let rec;
+  try {
+    rec = await idbGet("projects", id);
+  } catch (_) {}
+  if (!rec) {
+    toast(t("projMissing"), "err");
+    return;
+  }
+  state.restoring = true;
+  const problems = [];
+  try {
+    const getFile = async (key) => {
+      try {
+        const f = await idbGet("files", key);
+        if (f) SAVED.add(f);
+        return f || null;
+      } catch (_) {
+        return null;
+      }
+    };
+    state.projectId = rec.id;
+    state.projectCreated = rec.created;
+    state.video = rec.video || null;
+    state.projectThumb = rec.thumb || "";
+    state.projectThumbFor = null;
+
+    // স্ক্রিপ্ট ও অডিও
+    $("#scriptInput").value = rec.scriptText || "";
+    state.audioFile = rec.hasAudio ? await getFile(`${rec.id}:audio`) : null;
+    if (rec.hasAudio && !state.audioFile) problems.push(t("projAudioMissing"));
+    state.audioInfo = rec.audioInfo || (state.audioFile ? { name: state.audioFile.name, seconds: null } : null);
+    state.audioNotes = [];
+    state.audioErr = false;
+    $("#audioDrop").classList.toggle("has-file", Boolean(state.audioFile));
+    $("#audioDefaultNote").hidden = Boolean(state.audioFile);
+    renderAudioMeta();
+    $("#transcribeBtn").disabled = !state.audioFile;
+    $("#alignBtn").disabled = !state.audioFile;
+
+    // ব্যাকগ্রাউন্ড মিউজিক
+    state.bgMusicFile = rec.musicName ? await getFile(`${rec.id}:music`) : null;
+    if (rec.musicName && !state.bgMusicFile) problems.push(t("projMusicMissing"));
+    try {
+      const dt = new DataTransfer();
+      if (state.bgMusicFile) dt.items.add(state.bgMusicFile);
+      $("#bgMusicFile").files = dt.files;
+    } catch (_) {}
+
+    // সিন ও মিডিয়া
+    state.segments = [];
+    for (const sd of rec.segments || []) {
+      const seg = { ...sd, warn: "" };
+      if (sd.media && sd.media.source === "upload") {
+        const f = await getFile(`${rec.id}:seg:${sd.id}`);
+        if (f) {
+          const url = URL.createObjectURL(f);
+          seg.media = { source: "upload", type: sd.media.type, file: f, url, thumb: url, duration: sd.media.duration || null };
+        } else {
+          seg.media = null;
+          seg.status = "attention";
+          seg.warn = t("projSceneFileMissing", { n: state.segments.length + 1 });
+          problems.push(seg.warn);
+        }
+      }
+      state.segments.push(seg);
+    }
+
+    // সেটিংস
+    ["aspectSelect", "resSelect", "captionToggle", "captionFontSelect", "overlaySel", "endSel"].forEach((k) => setControl(k, rec.settings && rec.settings[k], "change"));
+    ["captionSizeSelect", "captionColorSelect", "captionAnimSelect"].forEach((k) => setControl(k, rec.settings && rec.settings[k]));
+    setControl("musicVol", rec.settings && rec.settings.musicVol);
+    setControl("musicDuckVol", rec.settings && rec.settings.musicDuckVol);
+    $("#musicVolOut").textContent = $("#musicVol").value + "%";
+    $("#musicDuckOut").textContent = $("#musicDuckVol").value + "%";
+
+    // প্রকাশের তথ্য (আগে তৈরি করা থাকলে)
+    PUB.cache = (rec.pub && rec.pub.cache) || {};
+    PUB.sig = (rec.pub && rec.pub.sig) || "";
+    PUB.platform = null;
+    $("#pubOut").innerHTML = "";
+    $("#pubActions").hidden = true;
+    $$(".pub-tab").forEach((b) => b.classList.remove("active"));
+
+    // স্ক্রিন সাজানো
+    $("#timeline").hidden = false;
+    $("#panelBuild").hidden = !state.segments.length;
+    renderSegments();
+    updateSummaries();
+    refreshBuildAvailability();
+    setMsg($("#analyzeStatus"), { key: "projOpened" }, "status-line ok");
+    wiz.done = new Set(rec.steps && rec.steps.done && rec.steps.done.length ? rec.steps.done : [2, 3, 4]);
+    wiz.max = Math.max(rec.steps && rec.steps.max ? rec.steps.max : 4, state.segments.length ? 4 : 2);
+    $(".render-setup").hidden = false;
+    $("#progressWrap").hidden = true;
+    if (state.video) {
+      wiz.done.add(5);
+      wiz.max = 5;
+      $("#resultVideo").src = state.video.url;
+      $("#downloadBtn").href = state.video.url;
+      $("#resultBox").hidden = false;
+    } else {
+      $("#resultBox").hidden = true;
+    }
+    $("#resultWarn").hidden = true;
+    goStep(2); // সবসময় প্রথম ধাপ: Audio and Script — বাকি ধাপের তথ্য আগে থেকেই সেভ করা
+  } finally {
+    state.restoring = false;
+  }
+  problems.forEach((m) => toast(m, "err"));
+  renderRecentList(state.video && state.video.url);
+  checkRemoteLinks(rec.id);
+}
+
+// সেভ করা স্টক-মিডিয়ার লিংক এখনো কাজ করছে কিনা (ভাঙা লিংকে লাল সতর্কতা + "আবার সার্চ করুন")
+function probeMedia(media) {
+  return new Promise((resolve) => {
+    const isVideo = media.type === "video";
+    const el = document.createElement(isVideo ? "video" : "img");
+    const done = (v) => {
+      clearTimeout(timer);
+      el.onload = el.onerror = el.onloadedmetadata = null;
+      resolve(v);
+    };
+    const timer = setTimeout(() => done(null), 10000); // সময় শেষ = অনিশ্চিত, ভাঙা ধরা হয় না
+    el.onerror = () => done(false);
+    if (isVideo) {
+      el.preload = "metadata";
+      el.muted = true;
+      el.onloadedmetadata = () => done(true);
+      el.src = media.url;
+    } else {
+      el.onload = () => done(true);
+      el.src = media.thumb || media.url;
+    }
+  });
+}
+async function checkRemoteLinks(pid) {
+  const todo = state.segments.filter((s) => s.media && s.media.source !== "upload");
+  let broken = 0;
+  let i = 0;
+  const worker = async () => {
+    while (i < todo.length) {
+      const seg = todo[i++];
+      const ok = await probeMedia(seg.media);
+      if (state.projectId !== pid) return; // এর মধ্যে অন্য প্রজেক্ট খুলে গেছে
+      if (ok === false) {
+        seg.media = null;
+        seg.status = "attention";
+        seg.warn = t("projLinkBroken", { n: state.segments.indexOf(seg) + 1 });
+        broken++;
+      }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  if (broken && state.projectId === pid) {
+    renderSegments();
+    updateSummaries();
+    refreshBuildAvailability();
+    toast(t("projLinksBroken", { n: broken }), "err");
+  }
+}
+
+// রেন্ডার করা ভিডিও আর না থাকলে (GitHub-এ শুধু সর্বশেষ ৩০টা থাকে) লাল সতর্কতা
+$("#resultVideo").addEventListener("error", () => {
+  if ($("#resultVideo").getAttribute("src")) {
+    $("#resultWarn").textContent = t("projVideoGone");
+    $("#resultWarn").hidden = false;
+  }
+});
+$("#resultVideo").addEventListener("loadedmetadata", () => ($("#resultWarn").hidden = true));
+
+// ---- Recent Renders তালিকা: প্রজেক্ট (IndexedDB) + পুরনো লিংক-শুধু এন্ট্রি (localStorage) ----
+async function refreshRecentItems() {
+  let projects = [];
+  try {
+    projects = (await idbAll("projects")).map((p) => ({ id: p.id, ts: p.ts, title: p.title, dur: p.dur, count: p.count, thumb: p.thumb || "", thumbType: "photo", url: p.video ? p.video.url : "" }));
+  } catch (_) {}
+  const legacy = loadRecentRenders();
+  RECENT_ITEMS = [...projects, ...legacy].sort((a, b) => b.ts - a.ts);
+  renderRecentList(state.video && state.video.url);
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const { usage, quota } = await navigator.storage.estimate();
+      const mb = (v) => (v / 1024 / 1024).toFixed(v > 1e9 ? 0 : 1);
+      $("#storageInfo").textContent = t("projStorage", { used: mb(usage || 0), quota: mb(quota || 0), n: projects.length, max: PROJ_MAX });
+    }
+  } catch (_) {}
+}
+
+// ---- নিজে থেকে সেভের ট্রিগার ----
+SETTING_IDS.forEach((id) => {
+  $("#" + id).addEventListener("change", scheduleSave);
+  $("#" + id).addEventListener("input", scheduleSave);
+});
+$("#scriptInput").addEventListener("input", scheduleSave);
+$("#audioInput").addEventListener("change", scheduleSave);
+$("#bgMusicFile").addEventListener("change", scheduleSave);
+
 // ---------- recent renders list ----------
 const RECENT_KEY = "rk_recent_renders";
 const RECENT_MAX = 10;
@@ -1914,6 +2306,12 @@ function loadRecentRenders() {
 }
 
 function saveRecentRender(url) {
+  if (state.projectId) {
+    // প্রজেক্ট সেভ থাকলে ভিডিওর লিংক সেই প্রজেক্টেই যোগ হয়
+    state.video = { url, ts: Date.now() };
+    saveProjectNow().then(() => refreshRecentItems());
+    return;
+  }
   const list = loadRecentRenders();
   list.unshift({
     url,
@@ -1931,7 +2329,7 @@ function saveRecentRender(url) {
 
 function renderRecentList(activeUrl) {
   const ul = $("#recentList");
-  const list = loadRecentRenders();
+  const list = RECENT_ITEMS;
   ul.innerHTML = "";
   if (!list.length) {
     ul.innerHTML = `<li class="empty"><b>🎬</b>${t("emptyRecent")}</li>`;
@@ -1939,20 +2337,21 @@ function renderRecentList(activeUrl) {
   }
   list.forEach((item) => {
     const li = document.createElement("li");
-    li.className = "project" + (item.url === activeUrl ? " active" : "");
+    li.className = "project" + ((item.url && item.url === activeUrl) || (item.id && item.id === state.projectId) ? " active" : "");
     const date = new Date(item.ts).toLocaleDateString(getLang() === "en" ? "en-US" : "bn-BD", { day: "numeric", month: "short", year: "numeric" });
     li.innerHTML = `
       <div class="thumb">${item.thumb ? mediaTag(item.thumb, item.thumbType) : ""}</div>
       <div class="info">
         <div class="ttl">${escapeHtml(item.title || t("untitled"))}</div>
-        <div class="meta"><span class="chip">⏱ ${fmtDur(item.dur || 0)}</span><span class="chip">🎞 ${item.count || "–"}</span><span class="chip">${date}</span></div>
+        <div class="meta"><span class="chip">⏱ ${fmtDur(item.dur || 0)}</span><span class="chip">🎞 ${item.count || "–"}</span><span class="chip">${date}</span>${item.url ? "" : '<span class="chip warn-chip">' + t("projNotRendered") + "</span>"}</div>
         <div class="acts">
           <button type="button" class="btn btn-secondary open">${t("openBtn")}</button>
-          <a class="btn btn-ghost" href="${escapeAttr(item.url)}" target="_blank" rel="noopener" download>⬇</a>
+          <a class="btn btn-ghost" href="${escapeAttr(item.url || "#")}" target="_blank" rel="noopener" download${item.url ? "" : " hidden"}>⬇</a>
           <button type="button" class="btn btn-ghost del" title="${t("delTitle")}">✕</button>
         </div>
       </div>`;
     const open = () => {
+      if (item.id) return openProject(item.id); // প্রজেক্ট: সব তথ্যসহ খোলে
       $("#resultVideo").src = item.url;
       $("#downloadBtn").href = item.url;
       $("#resultBox").hidden = false;
@@ -1963,16 +2362,17 @@ function renderRecentList(activeUrl) {
     };
     li.querySelector(".thumb").addEventListener("click", open);
     li.querySelector(".open").addEventListener("click", open);
-    li.querySelector(".del").addEventListener("click", () => {
-      const remaining = loadRecentRenders().filter((r) => r.ts !== item.ts);
-      localStorage.setItem(RECENT_KEY, JSON.stringify(remaining));
-      renderRecentList();
+    li.querySelector(".del").addEventListener("click", async () => {
+      if (!confirm(t("projDeleteConfirm"))) return;
+      if (item.id) await deleteProject(item.id); // তথ্য ও ব্রাউজারে রাখা ফাইল দুটোই মোছে
+      else localStorage.setItem(RECENT_KEY, JSON.stringify(loadRecentRenders().filter((r) => r.ts !== item.ts)));
+      refreshRecentItems();
     });
     ul.appendChild(li);
   });
 }
 
-renderRecentList();
+refreshRecentItems();
 
 // ============================================================
 // ভাষা (বাংলা / English) ও থিম (ডার্ক / লাইট) নিয়ন্ত্রণ

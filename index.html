@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Galada&family=Atma:wght@400&family=Mina:wght@400&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261030" />
+<link rel="stylesheet" href="style.css?v=20261050" />
 </head>
 <body data-step="2">
 
@@ -97,6 +97,7 @@
         <h3 class="section-title" data-i18n="recentTitle"></h3>
         <p class="hint" data-i18n="recentHint"></p>
         <ul class="recent-list" id="recentList"></ul>
+        <p class="hint" id="storageInfo"></p>
       </div>
     </section>
 
@@ -257,6 +258,7 @@
       <div id="resultBox" hidden>
         <h2 class="done-title">✓ <span data-i18n="doneTitle"></span></h2>
         <video id="resultVideo" controls playsinline></video>
+        <p class="warn-red" id="resultWarn" hidden></p>
         <div class="result-actions">
           <button type="button" class="btn btn-secondary" id="previewBtn" data-i18n="previewBtn"></button>
           <a class="btn btn-primary" id="downloadBtn" target="_blank" rel="noopener" download data-i18n="dlMp4"></a>
@@ -384,6 +386,6 @@
 </div>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
-<script type="module" src="app.js?v=20261030"></script>
+<script type="module" src="app.js?v=20261050"></script>
 </body>
 </html>

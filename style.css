@@ -253,7 +253,7 @@ textarea{font-family:var(--font-mono);font-size:15px;line-height:1.9;resize:vert
   background:var(--surface-2);
 }
 .result-tile:hover{ border-color:var(--teal); }
-.result-tile.mismatch{ border-color:var(--amber-dim); }
+.result-tile.mismatch{ border-color:var(--danger); }
 .result-tile img{ width:100%; height:100%; object-fit:cover; display:block; }
 .result-tile .src{
   position:absolute; bottom:3px; left:3px;
@@ -265,7 +265,7 @@ textarea{font-family:var(--font-mono);font-size:15px;line-height:1.9;resize:vert
   font-size:9px; background:rgba(0,0,0,0.7);
   padding:1px 6px; border-radius:3px; color:#ECEDF1;
 }
-.result-tile.mismatch .orient-badge{ color:#E8A33D; }
+.result-tile.mismatch .orient-badge{ color:var(--danger); }
 .modal-upload{
   padding:14px 20px;
   border-top:1px solid var(--line);
@@ -355,7 +355,7 @@ textarea{font-family:var(--font-mono);font-size:15px;line-height:1.9;resize:vert
 .modal-results{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;padding:4px;max-height:58vh;overflow-y:auto}
 .result-tile{aspect-ratio:16/10;border-radius:10px;border:2px solid transparent;overflow:hidden;position:relative;cursor:pointer;background:var(--surface-2);transition:transform .15s,border-color .2s}
 .result-tile:hover{border-color:var(--amber);transform:translateY(-2px)}
-.result-tile.mismatch{border-color:var(--amber-dim)}
+.result-tile.mismatch{border-color:var(--danger)}
 .result-tile .src,.result-tile .orient-badge{font-size:12px;padding:2px 8px;border-radius:999px;line-height:1.4}
 .result-tile .src{left:6px;bottom:6px}
 .result-tile .orient-badge{right:6px;top:6px}
@@ -394,3 +394,10 @@ textarea{line-height:1.75}
 .pub-meta{color:var(--text-dim);font-size:12px;flex:1}
 .pub-copy{padding:4px 12px;font-size:13px}
 .pub-text{white-space:pre-wrap;word-break:break-word;font-family:inherit;margin:0;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:14px;line-height:1.65}
+
+/* ---------- সব সতর্কতা লাল ---------- */
+.toast.err{color:var(--danger)}
+.warn-red{color:var(--danger);font-size:14px;margin:8px 0 0}
+.warn-red[hidden]{display:none}
+.chip.warn-chip{color:var(--danger);border-color:var(--danger)}
+.hint.err{color:var(--danger)}
