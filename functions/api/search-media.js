@@ -1,5 +1,5 @@
 // [Cloudflare Pages Function] POST /api/search-media
-// body: { provider: 'pexels'|'pixabay', apiKey, query, type: 'videos'|'photos' }
+// body: { pixabayApiKey, pexelsApiKey, apiKey, query, type: 'videos'|'photos', page, orientation }
 // returns: { results: [{thumb, downloadUrl, type:'video'|'photo', source, width, height}] }
 
 async function handler(req, res) {
@@ -17,26 +17,71 @@ async function handler(req, res) {
   }
   body = body || {};
 
-  const { provider, apiKey, query, type, page, orientation } = body;
-  if (!apiKey || !query) {
-    return res.status(400).json({ error: "apiKey/query missing" });
+  const { pixabayApiKey, pexelsApiKey, apiKey, query, type, page, orientation } = body;
+  if (!query) {
+    return res.status(400).json({ error: "query missing" });
   }
 
+  const pixKey = pixabayApiKey || apiKey;
+  const pexKey = pexelsApiKey || apiKey;
+
   try {
-    if (provider === "pexels") {
-      const results = await searchPexels(apiKey, query, type, page || 1, orientation);
-      return res.status(200).json({ results });
+    let pixabayResults = [];
+    let pexelsResults = [];
+
+    // ১. সমান্তভাবে বা আলাদাভাবে উভয় সোর্স থেকে Full HD মিডিয়া ফেচ করার চেষ্টা করা
+    if (pixKey) {
+      try {
+        pixabayResults = await searchPixabay(pixKey, query, type, page || 1, orientation);
+      } catch (err) {
+        console.warn("Pixabay fetch failed:", err.message);
+      }
     }
-    if (provider === "pixabay") {
-      const results = await searchPixabay(apiKey, query, type, page || 1, orientation);
-      return res.status(200).json({ results });
+
+    if (pexKey) {
+      try {
+        pexelsResults = await searchPexels(pexKey, query, type, page || 1, orientation);
+      } catch (err) {
+        console.warn("Pexels fetch failed:", err.message);
+      }
     }
-    return res.status(400).json({ error: "Unknown provider" });
+
+    // ২. যদি কোনো সোর্স থেকেই ডেটা না আসে
+    if (pixabayResults.length === 0 && pexelsResults.length === 0) {
+      throw new Error("No media found from any provider");
+    }
+
+    // ৩. রেন্ডম বা মিক্সড করার লজিক (৫-৫ অথবা এলোমেলোভাবে পেয়ার করে সাজানো)
+    let combinedResults = [];
+    let maxLength = Math.max(pixabayResults.length, pexelsResults.length);
+
+    for (let i = 0; i < maxLength; i++) {
+      // রেন্ডম অর্ডারে সাজানোর জন্য বা অল্টারনেটিভলি পুশ করার জন্য
+      if (pixabayResults[i]) combinedResults.push(pixabayResults[i]);
+      if (pexelsResults[i]) combinedResults.push(pexelsResults[i]);
+    }
+
+    // রেজাল্টগুলোকে একটু সফলভাবে শাফেল (Randomize) করে দেওয়া যাতে মিক্সড দেখায়
+    combinedResults = shuffleArray(combinedResults);
+
+    return res.status(200).json({ results: combinedResults });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 }
 
+// অ্যারে শাফেল করার ছোট ফাংশন (Randomize order)
+function shuffleArray(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+// ------------------------------------------------------------
+// Pexels API (Full HD Only Filter)
+// ------------------------------------------------------------
 async function searchPexels(apiKey, query, type, page, orientation) {
   const isVideo = type === "videos";
   const orientParam = orientation ? `&orientation=${orientation}` : "";
@@ -50,30 +95,35 @@ async function searchPexels(apiKey, query, type, page, orientation) {
 
   if (isVideo) {
     return (data.videos || []).map((v) => {
-      // prefer a smaller file (sd) to keep download size manageable for client-side ffmpeg
-      const files = (v.video_files || []).slice().sort((a, b) => (a.width || 0) - (b.width || 0));
-      const small = files.find((f) => (f.width || 0) >= 640 && (f.width || 0) <= 960) || files[0];
+      const files = (v.video_files || []).slice();
+      // শুধুমাত্র Full HD বা কাছাকাছি সেরা রেজুলেশন ফিল্টার করা
+      const bestVideo = files.find((f) => f.width >= 1280 || f.height >= 720) || files[0];
+
       return {
         type: "video",
         thumb: v.image,
-        downloadUrl: small ? small.link : v.video_files?.[0]?.link,
+        downloadUrl: bestVideo ? bestVideo.link : v.video_files?.[0]?.link,
         duration: v.duration || null,
         source: "Pexels",
-        width: v.width,
-        height: v.height,
+        width: bestVideo?.width || v.width,
+        height: bestVideo?.height || v.height,
       };
     });
   }
+
   return (data.photos || []).map((p) => ({
     type: "photo",
     thumb: p.src.medium,
-    downloadUrl: p.src.large,
+    downloadUrl: p.src.original || p.src.large2x || p.src.large,
     source: "Pexels",
     width: p.width,
     height: p.height,
   }));
 }
 
+// ------------------------------------------------------------
+// Pixabay API (Full HD Only Filter)
+// ------------------------------------------------------------
 async function searchPixabay(apiKey, query, type, page, orientation) {
   const isVideo = type === "videos";
   const pixabayOrient = orientation === "portrait" ? "vertical" : orientation === "landscape" ? "horizontal" : null;
@@ -87,20 +137,25 @@ async function searchPixabay(apiKey, query, type, page, orientation) {
   if (!res.ok) throw new Error(data?.error || "Pixabay API request failed");
 
   if (isVideo) {
-    return (data.hits || []).map((v) => ({
-      type: "video",
-      thumb: v.videos?.tiny?.thumbnail || v.videos?.small?.thumbnail,
-      downloadUrl: (v.videos?.small || v.videos?.medium || v.videos?.large)?.url,
-      duration: v.duration || null,
-      source: "Pixabay",
-      width: v.videos?.small?.width,
-      height: v.videos?.small?.height,
-    }));
+    return (data.hits || []).map((v) => {
+      const vObj = v.videos || {};
+      const bestVid = vObj.large || vObj.medium || vObj.small;
+      return {
+        type: "video",
+        thumb: vObj.tiny?.thumbnail || vObj.small?.thumbnail,
+        downloadUrl: bestVid?.url,
+        duration: v.duration || null,
+        source: "Pixabay",
+        width: bestVid?.width,
+        height: bestVid?.height,
+      };
+    });
   }
+
   return (data.hits || []).map((p) => ({
     type: "photo",
     thumb: p.webformatURL,
-    downloadUrl: p.largeImageURL || p.webformatURL,
+    downloadUrl: p.fullHDURL || p.imageURL || p.largeImageURL || p.webformatURL,
     source: "Pixabay",
     width: p.imageWidth,
     height: p.imageHeight,
@@ -109,9 +164,6 @@ async function searchPixabay(apiKey, query, type, page, orientation) {
 
 // ============================================================
 // Cloudflare Pages Functions অ্যাডাপ্টার
-// Vercel-এর (req, res) ফরম্যাটের মূল লজিক হুবহু রাখা হয়েছে (api/ ফোল্ডারের ফাইলের সাথে মিলিয়ে রাখতে সুবিধা)।
-// নিচের অংশ Cloudflare-এর Request/Response কে ওই ফরম্যাটে রূপান্তর করে এবং উত্তরটা আবার Response বানায়।
-// ফাইলের পথই URL: functions/api/search-media.js  ->  /api/search-media
 // ============================================================
 export async function onRequest(context) {
   const { request, env } = context;
@@ -139,4 +191,5 @@ export async function onRequest(context) {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
   });
-}
+    }
+        
