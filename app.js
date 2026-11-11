@@ -1044,6 +1044,17 @@ async function runPickerSearch() {
   $("#pickerPageLabel").textContent = t("pageLabel", { n: pickerPage });
   $("#pickerPrevBtn").disabled = pickerPage <= 1;
   
+  // এখানে ডায়ালগের টাইটেলে মোট ডিউরেশন (যেমন: 7.5s) ক্যালকুলেট করে বসানো হচ্ছে
+  if (typeof activeSeg !== 'undefined' && activeSeg) {
+    const D = activeSeg.n + (activeSeg.tp || 0) / 2 + (activeSeg.tn || 0) / 2;
+    const dSec = (D / (typeof FPS !== 'undefined' ? FPS : 30)).toFixed(1);
+    const titleEl = $("#pickerModalTitle") || document.querySelector(".modal-title") || $("#modalTitle"); // আপনার প্রজেক্টের টাইটেল সিলেক্টর অনুযায়ী
+    if (titleEl) {
+      // যদি আপনার কোডে অলরেডি টেক্সট সেট করা থাকে, তার সাথে ডিউরেশন যোগ করে দেওয়া
+      titleEl.textContent = `Pick media — ${dSec}s`;
+    }
+  }
+
   try {
     const query = $("#pickerQuery").value.trim();
     const type = $("#pickerType").value;
@@ -1064,7 +1075,6 @@ async function runPickerSearch() {
       const tile = document.createElement("div");
       tile.className = "result-tile" + (mismatch ? " mismatch" : "");
 
-      // ভিডিওর ডিউরেশন ফরম্যাট করা (যেমন: 0:12)
       let durationText = "";
       if (r.type === "video" && r.duration) {
         const mins = Math.floor(r.duration / 60);
@@ -1072,25 +1082,27 @@ async function runPickerSearch() {
         durationText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
       }
 
-      // থাম্বনেইল, প্লে বাটন ও ডিউরেশনসহ স্ট্রাকচার
       tile.innerHTML = `
-        <div class="media-container" style="position: relative; width: 100%; height: 100%;">
-          <img src="${r.thumb}" alt="" class="thumb-img" />
-          ${r.type === "video" ? `<div class="play-btn-overlay">▶</div>` : ""}
-          ${durationText ? `<span class="duration-badge">${durationText}</span>` : ""}
+        <div class="media-container" style="position: relative; width: 100%; height: 140px; cursor: pointer;">
+          <img src="${r.thumb}" alt="" class="thumb-img" style="width:100%; height:100%; object-fit:cover;" />
+          ${r.type === "video" ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.6); color:#fff; border-radius:50%; width:36px; height:36px; display:flex; align-items:center; justify-content:center; pointer-events:none;">▶</div>` : ""}
+          ${durationText ? `<span class="duration-badge" style="position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,0.7); color:#fff; padding:2px 4px; font-size:10px; border-radius:3px;">${durationText}</span>` : ""}
         </div>
-        <span class="src">${r.source}</span>
-        <span class="orient-badge">${mismatch ? "⚠ " : ""}${orientLabel[orient] || ""}</span>
+        <div class="tile-footer" style="padding: 4px; display: flex; justify-content: space-between; align-items: center; cursor: pointer;">
+          <span class="src">${r.source}</span>
+          <span class="orient-badge">${mismatch ? "⚠ " : ""}${orientLabel[orient] || ""}</span>
+        </div>
       `;
 
       const mediaContainer = tile.querySelector(".media-container");
+      const thumbImg = mediaContainer.querySelector(".thumb-img");
+      const playOverlay = mediaContainer.querySelector(".play-btn-overlay");
 
-      // মিডিয়া কন্টেইনারে ক্লিক করলে ভিডিও প্লে হবে (অন্য ভিডিও বন্ধ হয়ে যাবে)
-      mediaContainer.addEventListener("click", (e) => {
-        e.stopPropagation(); // কার্ডের মূল সিলেক্ট ইভেন্ট আটকাবে
-        
-        if (r.type === "video") {
-          // আগে থেকে চলতে থাকা অন্য সব ভিডিও বন্ধ করা
+      // ১. শুধু প্লে বাটনে বা থাম্বনেইলের ওপর প্রিভিউ ভিডিও চালুর লজিক
+      if (r.type === "video") {
+        mediaContainer.addEventListener("click", (e) => {
+          e.stopPropagation(); // কার্ডের মূল সিলেক্ট হওয়া আটকাবে, শুধু ভিডিও প্লে হবে
+          
           document.querySelectorAll(".result-tile video").forEach((vid) => {
             vid.pause();
             const parent = vid.parentElement;
@@ -1101,31 +1113,28 @@ async function runPickerSearch() {
             vid.remove();
           });
 
-          const img = mediaContainer.querySelector("img");
-          const playBtn = mediaContainer.querySelector(".play-btn-overlay");
-          img.style.display = "none";
-          if (playBtn) playBtn.style.display = "none";
+          thumbImg.style.display = "none";
+          if (playOverlay) playOverlay.style.display = "none";
 
           const videoEl = document.createElement("video");
           videoEl.src = r.downloadUrl;
           videoEl.controls = true;
           videoEl.autoplay = true;
           videoEl.style.width = "100%";
-          videoEl.style.height = "140px";
+          videoEl.style.height = "100%";
           videoEl.style.objectFit = "cover";
 
-          // ভিডিও শেষ হলে থাম্বনেইল ফিরিয়ে আনা
           videoEl.addEventListener("ended", () => {
             videoEl.remove();
-            img.style.display = "block";
-            if (playBtn) playBtn.style.display = "flex";
+            thumbImg.style.display = "block";
+            if (playOverlay) playOverlay.style.display = "flex";
           });
 
-          mediaContainer.insertBefore(videoEl, img);
-        }
-      });
+          mediaContainer.insertBefore(videoEl, thumbImg);
+        });
+      }
 
-      // পুরো কার্ডে ক্লিক করলে ফুটেজটি সিলেক্ট হবে
+      // ২. পুরো কার্ডের যেকোনো জায়গায় (ছবি, সোর্স নাম বা ফাঁকা অংশ) ক্লিক করলে ফুটেজটি সিলেক্ট হবে
       tile.addEventListener("click", () => {
         if (activeSeg) {
           applyMediaChoice(activeSeg, r);
@@ -1141,6 +1150,7 @@ async function runPickerSearch() {
     resultsEl.innerHTML = `<p class="hint">${escapeHtml(t("errPrefix", { msg: err.message }))}</p>`;
   }
 }
+
 
 
 $("#pickerUpload").addEventListener("change", async (e) => {
