@@ -1009,47 +1009,29 @@ let activeSeg = null;
 let pickerPage = 1;
 const modal = $("#pickerModal");
 
-// ফ্রেম বা সেকেন্ড থেকে পারফেক্ট MM:SS ফরম্যাট বানানোর ফাংশন
-function formatTime(seconds) {
-  if (isNaN(seconds) || seconds < 0) return "00:00";
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
-}
-
 function openPicker(seg) {
   activeSeg = seg;
   pickerPage = 1;
 
+  // ডিউরেশন বা সেকেন্ড হিসাব করা
   const fps = typeof FPS !== 'undefined' ? FPS : 30;
-  
-  // start সেকেন্ড বের করা
-  let startSec = 0;
-  if (seg.start !== undefined) startSec = Number(seg.start) / (seg.isFrame ? fps : 1);
-  else if (seg.startTime !== undefined) startSec = Number(seg.startTime);
-
-  // duration বা length বের করা
   let durationSec = 0;
   if (seg.n !== undefined) durationSec = Number(seg.n) / fps;
   else if (seg.duration !== undefined) durationSec = Number(seg.duration);
+  else if (seg.end !== undefined && seg.start !== undefined) {
+    durationSec = (Number(seg.end) - Number(seg.start)) / (seg.isFrame ? fps : 1);
+  }
+  const finalDuration = durationSec > 0 ? durationSec.toFixed(0) : "4";
 
-  // end সেকেন্ড বের করা
-  let endSec = seg.end !== undefined ? Number(seg.end) / (seg.isFrame ? fps : 1) : (startSec + durationSec);
-
-  const formattedStart = formatTime(startSec);
-  const formattedEnd = formatTime(endSec);
-  const finalDuration = durationSec > 0 ? durationSec.toFixed(0) : (endSec - startSec).toFixed(0);
-
-  // ডায়ালগের টাইটেল আপডেট করা
+  // ডায়ালগের টাইটেল আপডেট (Scene · 4s এবং স্ক্রিপ্ট)
   const titleEl = document.getElementById("pickerTitle");
   if (titleEl) {
     const scriptText = seg.text || seg.script || seg.caption || "";
     const isLong = scriptText.length > 80;
 
-    // আপনার কাঙ্ক্ষিত ফরম্যাট: Scene 00:00 – 00:04 · 4s
     titleEl.innerHTML = `
       <div style="font-weight: bold; font-size: 15px; margin-bottom: 4px;">
-        Scene ${formattedStart} – ${formattedEnd} &middot; ${finalDuration}s
+        Scene &middot; ${finalDuration}s
       </div>
       ${scriptText ? `
         <div style="font-size: 12px; font-weight: normal; opacity: 0.9; background: rgba(128,128,128,0.12); padding: 6px 10px; border-radius: 4px; text-align: left; margin-top: 4px;">
@@ -1105,6 +1087,7 @@ $("#pickerNextBtn").addEventListener("click", () => {
 
 
 
+
 async function runPickerSearch() {
   const resultsEl = $("#pickerResults");
   resultsEl.innerHTML = `<p class="hint">${t("searching")}</p>`;
@@ -1140,18 +1123,18 @@ async function runPickerSearch() {
         durationText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
       }
 
-      // থাম্বনেইল, সিলেক্ট বাটন, প্লে বাটন ও ডিউরেশনসহ স্ট্রাকচার
+      // কার্ডের স্ট্রাকচার (থাম্বনেইল, ✓ Select বাটন, ▶ প্লে বাটন এবং ডিউরেশন ব্যাজ)
       tile.innerHTML = `
         <div class="media-container" style="position: relative; width: 100%; height: 140px;">
           <img src="${r.thumb}" alt="" class="thumb-img" style="width:100%; height:100%; object-fit:cover;" />
           
-          <button type="button" class="select-btn" title="Select" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.9); color:#fff; border:none; padding:3px 8px; font-size:11px; border-radius:4px; cursor:pointer; z-index:3;">✓ Select</button>
+          <button type="button" class="select-btn" title="Select" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.9); color:#fff; border:none; padding:3px 8px; font-size:11px; border-radius:4px; cursor:pointer; z-index:5;">✓ Select</button>
 
-          ${r.type === "video" ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.6); color:#fff; border-radius:50%; width:36px; height:36px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:2;" title="Preview video">▶</div>` : ""}
+          ${r.type === "video" ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.65); color:#fff; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:4;" title="Preview video">▶</div>` : ""}
           
-          ${durationText ? `<span class="duration-badge" style="position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,0.7); color:#fff; padding:2px 4px; font-size:10px; border-radius:3px; z-index:2;">${durationText}</span>` : ""}
+          ${durationText ? `<span class="duration-badge" style="position:absolute; bottom:6px; right:6px; background:rgba(0,128,0,0.85); color:#fff; padding:2px 5px; font-size:10px; border-radius:3px; z-index:3;">${durationText}</span>` : ""}
         </div>
-        <div class="tile-footer" style="padding: 4px; display: flex; justify-content: space-between; align-items: center;">
+        <div class="tile-footer" style="padding: 6px; display: flex; justify-content: space-between; align-items: center;">
           <span class="src">${r.source}</span>
           <span class="orient-badge">${mismatch ? "⚠ " : ""}${orientLabel[orient] || ""}</span>
         </div>
@@ -1162,25 +1145,23 @@ async function runPickerSearch() {
       const playBtn = mediaContainer.querySelector(".play-btn-overlay");
       const selectBtn = tile.querySelector(".select-btn");
 
-      // কমন সিলেকশন লজিক (শুধু '✓ Select' বাটনে ক্লিক করলেই কাজ করবে)
-      const handleSelection = (e) => {
-        e.stopPropagation();
-        if (activeSeg) {
-          applyMediaChoice(activeSeg, r);
-          activeSeg.query = $("#pickerQuery").value.trim();
-          renderSegments();
-        }
-        modal.hidden = true;
-      };
-
+      // ১. শুধু '✓ Select' বাটনে ক্লিক করলেই ফুটেজ সিলেক্ট হবে
       if (selectBtn) {
-        selectBtn.addEventListener("click", handleSelection);
+        selectBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (activeSeg) {
+            applyMediaChoice(activeSeg, r);
+            activeSeg.query = $("#pickerQuery").value.trim();
+            renderSegments();
+          }
+          modal.hidden = true;
+        });
       }
 
-      // ভিডিও প্লে বাটনে ক্লিক করলে প্রিভিউ হবে (সিলেক্ট হবে না)
+      // ২. শুধু '▶' প্লে বাটনে ক্লিক করলে ভিডিও প্লে হবে (সিলেক্ট হবে না)
       if (r.type === "video" && playBtn) {
         playBtn.addEventListener("click", (e) => {
-          e.stopPropagation(); // কার্ড বা সিলেকশন ট্রিগার হওয়া আটকাবে
+          e.stopPropagation(); // কার্ডের অন্য ইভেন্টে যাওয়া আটকাবে
           
           // আগে থেকে চলতে থাকা অন্য সব ভিডিও বন্ধ করা
           document.querySelectorAll(".result-tile video").forEach((vid) => {
@@ -1209,7 +1190,7 @@ async function runPickerSearch() {
           videoEl.style.position = "absolute";
           videoEl.style.top = "0";
           videoEl.style.left = "0";
-          videoEl.style.zIndex = "1";
+          videoEl.style.zIndex = "2";
 
           // ভিডিও শেষ হলে থাম্বনেইল ফিরিয়ে আনা
           videoEl.addEventListener("ended", () => {
@@ -1219,7 +1200,7 @@ async function runPickerSearch() {
             if (selectBtn) selectBtn.style.display = "block";
           });
 
-          mediaContainer.insertBefore(videoEl, img);
+          mediaContainer.appendChild(videoEl);
         });
       }
 
@@ -1229,6 +1210,7 @@ async function runPickerSearch() {
     resultsEl.innerHTML = `<p class="hint">${escapeHtml(t("errPrefix", { msg: err.message }))}</p>`;
   }
 }
+
 
 
 
