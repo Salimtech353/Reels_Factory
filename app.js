@@ -1046,8 +1046,8 @@ async function runPickerSearch() {
   
   const queryVal = $("#pickerQuery").value.trim();
 
-  // ডায়ালগের টাইটেলে সার্চ কিওয়ার্ড, মোট ডিউরেশন এবং স্ক্রিপ্ট দেখানোর লজিক
-  const modalTitleEl = $("#pickerModalTitle") || document.querySelector(".modal-title") || document.querySelector("#modal h3");
+  // ডায়ালগের টাইটেলে সঠিক আইডি (pickerTitle) দিয়ে ডিউরেশন ও স্ক্রিপ্ট সেট করার লজিক
+  const modalTitleEl = document.getElementById("pickerTitle");
   if (modalTitleEl && typeof activeSeg !== 'undefined' && activeSeg) {
     const D = activeSeg.n + (activeSeg.tp || 0) / 2 + (activeSeg.tn || 0) / 2;
     const dSec = (D / (typeof FPS !== 'undefined' ? FPS : 30)).toFixed(1);
@@ -1200,6 +1200,7 @@ async function runPickerSearch() {
     resultsEl.innerHTML = `<p class="hint">${escapeHtml(t("errPrefix", { msg: err.message }))}</p>`;
   }
 }
+
 
 
 
