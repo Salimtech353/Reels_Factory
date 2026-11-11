@@ -401,3 +401,58 @@ textarea{line-height:1.75}
 .warn-red[hidden]{display:none}
 .chip.warn-chip{color:var(--danger);border-color:var(--danger)}
 .hint.err{color:var(--danger)}
+
+.result-tile {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  border-radius: 8px;
+  background: #000;
+}
+
+/* থাম্বনেইল এবং ভিডিও ট্যাগ */
+.result-tile img,
+.result-tile video {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  display: block;
+}
+
+/* প্লে বাটন ওভারলে ডিজাইন */
+.play-btn-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: background 0.2s;
+  pointer-events: none; /* যাতে ক্লিকের সমস্যা না হয় */
+}
+
+.result-tile:hover .play-btn-overlay {
+  background: rgba(0, 123, 255, 0.8);
+}
+
+/* ডিউরেশন ব্যাজ (ছোট করে নিচে বা ওপরে দেখানোর জন্য) */
+.duration-badge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+

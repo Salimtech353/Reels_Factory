@@ -1043,23 +1043,89 @@ async function runPickerSearch() {
   resultsEl.innerHTML = `<p class="hint">${t("searching")}</p>`;
   $("#pickerPageLabel").textContent = t("pageLabel", { n: pickerPage });
   $("#pickerPrevBtn").disabled = pickerPage <= 1;
+  
   try {
     const query = $("#pickerQuery").value.trim();
     const type = $("#pickerType").value;
     const results = await searchMedia(query, type, pickerPage);
+    
     if (!results.length) {
       resultsEl.innerHTML = `<p class="hint">${t("noResults")}</p>`;
       return;
     }
+    
     resultsEl.innerHTML = "";
     const wanted = targetOrientation();
     const orientLabel = { landscape: t("landscape"), portrait: t("portrait"), square: t("square"), unknown: "" };
+    
     results.forEach((r) => {
       const orient = mediaOrientation(r);
       const mismatch = orient !== "unknown" && orient !== wanted;
       const tile = document.createElement("div");
       tile.className = "result-tile" + (mismatch ? " mismatch" : "");
-      tile.innerHTML = `<img src="${r.thumb}" alt="" /><span class="src">${r.source}</span><span class="orient-badge">${mismatch ? "⚠ " : ""}${orientLabel[orient] || ""}</span>`;
+
+      // ভিডিওর ডিউরেশন ফরম্যাট করা (যেমন: 0:12)
+      let durationText = "";
+      if (r.type === "video" && r.duration) {
+        const mins = Math.floor(r.duration / 60);
+        const secs = Math.floor(r.duration % 60);
+        durationText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+      }
+
+      // থাম্বনেইল, প্লে বাটন ও ডিউরেশনসহ স্ট্রাকচার
+      tile.innerHTML = `
+        <div class="media-container" style="position: relative; width: 100%; height: 100%;">
+          <img src="${r.thumb}" alt="" class="thumb-img" />
+          ${r.type === "video" ? `<div class="play-btn-overlay">▶</div>` : ""}
+          ${durationText ? `<span class="duration-badge">${durationText}</span>` : ""}
+        </div>
+        <span class="src">${r.source}</span>
+        <span class="orient-badge">${mismatch ? "⚠ " : ""}${orientLabel[orient] || ""}</span>
+      `;
+
+      const mediaContainer = tile.querySelector(".media-container");
+
+      // মিডিয়া কন্টেইনারে ক্লিক করলে ভিডিও প্লে হবে (অন্য ভিডিও বন্ধ হয়ে যাবে)
+      mediaContainer.addEventListener("click", (e) => {
+        e.stopPropagation(); // কার্ডের মূল সিলেক্ট ইভেন্ট আটকাবে
+        
+        if (r.type === "video") {
+          // আগে থেকে চলতে থাকা অন্য সব ভিডিও বন্ধ করা
+          document.querySelectorAll(".result-tile video").forEach((vid) => {
+            vid.pause();
+            const parent = vid.parentElement;
+            const img = parent.querySelector("img");
+            if (img) img.style.display = "block";
+            const playBtn = parent.querySelector(".play-btn-overlay");
+            if (playBtn) playBtn.style.display = "flex";
+            vid.remove();
+          });
+
+          const img = mediaContainer.querySelector("img");
+          const playBtn = mediaContainer.querySelector(".play-btn-overlay");
+          img.style.display = "none";
+          if (playBtn) playBtn.style.display = "none";
+
+          const videoEl = document.createElement("video");
+          videoEl.src = r.downloadUrl;
+          videoEl.controls = true;
+          videoEl.autoplay = true;
+          videoEl.style.width = "100%";
+          videoEl.style.height = "140px";
+          videoEl.style.objectFit = "cover";
+
+          // ভিডিও শেষ হলে থাম্বনেইল ফিরিয়ে আনা
+          videoEl.addEventListener("ended", () => {
+            videoEl.remove();
+            img.style.display = "block";
+            if (playBtn) playBtn.style.display = "flex";
+          });
+
+          mediaContainer.insertBefore(videoEl, img);
+        }
+      });
+
+      // পুরো কার্ডে ক্লিক করলে ফুটেজটি সিলেক্ট হবে
       tile.addEventListener("click", () => {
         if (activeSeg) {
           applyMediaChoice(activeSeg, r);
@@ -1068,12 +1134,14 @@ async function runPickerSearch() {
         }
         modal.hidden = true;
       });
+
       resultsEl.appendChild(tile);
     });
   } catch (err) {
     resultsEl.innerHTML = `<p class="hint">${escapeHtml(t("errPrefix", { msg: err.message }))}</p>`;
   }
 }
+
 
 $("#pickerUpload").addEventListener("change", async (e) => {
   const file = e.target.files[0];
