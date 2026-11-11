@@ -1087,7 +1087,6 @@ $("#pickerNextBtn").addEventListener("click", () => {
 
 
 
-
 async function runPickerSearch() {
   const resultsEl = $("#pickerResults");
   resultsEl.innerHTML = `<p class="hint">${t("searching")}</p>`;
@@ -1125,47 +1124,48 @@ async function runPickerSearch() {
 
       // থাম্বনেইল, ✓ Select বাটন, প্লে বাটন ও ডিউরেশনসহ স্ট্রাকচার
       tile.innerHTML = `
-        <div class="media-container" style="position: relative; width: 100%; height: 140px;">
+        <div class="media-container" style="position: relative; width: 100%; height: 140px; overflow: hidden; border-radius: 4px;">
           <img src="${r.thumb}" alt="" class="thumb-img" style="width:100%; height:100%; object-fit:cover;" />
           
-          <button type="button" class="select-btn" title="Select" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.9); color:#fff; border:none; padding:3px 8px; font-size:11px; border-radius:4px; cursor:pointer; z-index:5;">✓ Select</button>
+          <button type="button" class="select-btn" title="Select" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.95); color:#fff; border:none; padding:4px 9px; font-size:11px; border-radius:4px; cursor:pointer; z-index:10; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">✓ Select</button>
 
-          ${r.type === "video" ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.6); color:#fff; border-radius:50%; width:36px; height:36px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:4;">▶</div>` : ""}
+          ${r.type === "video" ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.65); color:#fff; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:9;" title="Preview video">▶</div>` : ""}
           
-          ${durationText ? `<span class="duration-badge" style="position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,0.7); color:#fff; padding:2px 4px; font-size:10px; border-radius:3px; z-index:3;">${durationText}</span>` : ""}
+          ${durationText ? `<span class="duration-badge" style="position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,0.85); color:#fff; padding:2px 6px; font-size:10px; border-radius:3px; z-index:10; font-weight: bold;">${durationText}</span>` : ""}
         </div>
-        <div class="tile-footer" style="padding: 4px; display: flex; justify-content: space-between; align-items: center;">
+        <div class="tile-footer" style="padding: 6px; display: flex; justify-content: space-between; align-items: center;">
           <span class="src">${r.source}</span>
           <span class="orient-badge">${mismatch ? "⚠ " : ""}${orientLabel[orient] || ""}</span>
         </div>
       `;
 
       const mediaContainer = tile.querySelector(".media-container");
+      const img = mediaContainer.querySelector(".thumb-img");
+      const playBtn = mediaContainer.querySelector(".play-btn-overlay");
       const selectBtn = tile.querySelector(".select-btn");
 
-      // মিডিয়া কন্টেইনারে ক্লিক করলে ভিডিও প্লে হবে (আপনার আগের কার্যকরী লজিক)
+      // মিডিয়া কন্টেইনারে ক্লিক করলে ভিডিও প্লে হবে (সিলেক্ট হবে না)
       mediaContainer.addEventListener("click", (e) => {
-        e.stopPropagation(); // কার্ডের মূল সিলেক্ট ইভেন্ট আটকাবে
+        // যদি ইউজার সরাসরি সিলেক্ট বাটন বা প্লে বাটনে ক্লিক করে, তবে এই ইভেন্ট ওভাররাইড করার দরকার নেই
+        if (e.target.classList.contains("select-btn")) return;
+        
+        e.stopPropagation(); 
         
         if (r.type === "video") {
-          // আগে থেকে চলতে থাকা অন্য সব ভিডিও বন্ধ করা
+          // আগে থেকে চলতে থাকা অন্য সব ভিডিও বন্ধ করা এবং থাম্বনেইল ফিরিয়ে আনা
           document.querySelectorAll(".result-tile video").forEach((vid) => {
             vid.pause();
             const parent = vid.closest(".result-tile");
-            const img = parent.querySelector(".thumb-img");
-            if (img) img.style.display = "block";
-            const playBtn = parent.querySelector(".play-btn-overlay");
-            if (playBtn) playBtn.style.display = "flex";
-            const sBtn = parent.querySelector(".select-btn");
-            if (sBtn) sBtn.style.display = "block";
+            const thumb = parent.querySelector(".thumb-img");
+            if (thumb) thumb.style.display = "block";
+            const pOverlay = parent.querySelector(".play-btn-overlay");
+            if (pOverlay) pOverlay.style.display = "flex";
             vid.remove();
           });
 
-          const img = mediaContainer.querySelector(".thumb-img");
-          const playBtn = mediaContainer.querySelector(".play-btn-overlay");
           if (img) img.style.display = "none";
           if (playBtn) playBtn.style.display = "none";
-          if (selectBtn) selectBtn.style.display = "none";
+          // মনে রাখবেন: selectBtn এবং durationText হাইড করা হচ্ছে না, এগুলো ভিডিওর উপরেই থাকবে!
 
           const videoEl = document.createElement("video");
           videoEl.src = r.downloadUrl;
@@ -1177,21 +1177,21 @@ async function runPickerSearch() {
           videoEl.style.position = "absolute";
           videoEl.style.top = "0";
           videoEl.style.left = "0";
-          videoEl.style.zIndex = "2";
+          videoEl.style.zIndex = "5"; // ভিডিওর z-index কম রাখা হয়েছে যাতে সিলেক্ট বাটন (10) ও ডিউরেশন উপরে থাকে
 
-          // ভিডিও শেষ হলে থাম্বনেইল ও বাটন ফিরিয়ে আনা
+          // ভিডিও শেষ হলে থাম্বনেইল ও প্লে বাটন ফিরিয়ে আনা
           videoEl.addEventListener("ended", () => {
             videoEl.remove();
             if (img) img.style.display = "block";
             if (playBtn) playBtn.style.display = "flex";
-            if (selectBtn) selectBtn.style.display = "block";
           });
 
-          mediaContainer.appendChild(videoEl);
+          // থাম্বনেইলের ঠিক ওপরে ভিডিও ইনসার্ট করা
+          mediaContainer.insertBefore(videoEl, img);
         }
       });
 
-      // শুধু '✓ Select' বাটনে ক্লিক করলেই ফুটেজ সিলেক্ট হবে (ফাঁকা জায়গায় ক্লিক করলে আর সিলেক্ট হবে না)
+      // শুধু '✓ Select' বাটনে ক্লিক করলেই ফুটেজ সিলেক্ট হবে
       if (selectBtn) {
         selectBtn.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -1210,6 +1210,7 @@ async function runPickerSearch() {
     resultsEl.innerHTML = `<p class="hint">${escapeHtml(t("errPrefix", { msg: err.message }))}</p>`;
   }
 }
+
 
 
 
