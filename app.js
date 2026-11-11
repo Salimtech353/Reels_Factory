@@ -1124,14 +1124,14 @@ async function runPickerSearch() {
 
       // থাম্বনেইল, ✓ Select বাটন, প্লে বাটন ও ডিউরেশনসহ স্ট্রাকচার
       tile.innerHTML = `
-        <div class="media-container" style="position: relative; width: 100%; height: 140px; overflow: hidden; border-radius: 4px;">
-          <img src="${r.thumb}" alt="" class="thumb-img" style="width:100%; height:100%; object-fit:cover;" />
+        <div class="media-container" style="position: relative; width: 100%; height: 140px; overflow: hidden; border-radius: 4px; background: #000;">
+          <img src="${r.thumb}" alt="" class="thumb-img" style="width:100%; height:100%; object-fit:cover; display:block;" />
           
-          <button type="button" class="select-btn" title="Select" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.95); color:#fff; border:none; padding:4px 9px; font-size:11px; border-radius:4px; cursor:pointer; z-index:10; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">✓ Select</button>
+          <button type="button" class="select-btn" title="Select" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.95); color:#fff; border:none; padding:4px 9px; font-size:11px; border-radius:4px; cursor:pointer; z-index:30; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">✓ Select</button>
 
-          ${r.type === "video" ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.65); color:#fff; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:9;" title="Preview video">▶</div>` : ""}
-          
-          ${durationText ? `<span class="duration-badge" style="position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,0.85); color:#fff; padding:2px 6px; font-size:10px; border-radius:3px; z-index:10; font-weight: bold;">${durationText}</span>` : ""}
+          ${durationText ? `<span class="duration-badge" style="position:absolute; top:6px; right:6px; background:rgba(0,0,0,0.85); color:#fff; padding:3px 7px; font-size:10px; border-radius:3px; z-index:30; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${durationText}</span>` : ""}
+
+          ${r.type === "video" ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.65); color:#fff; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:25;" title="Preview video">▶</div>` : ""}
         </div>
         <div class="tile-footer" style="padding: 6px; display: flex; justify-content: space-between; align-items: center;">
           <span class="src">${r.source}</span>
@@ -1146,7 +1146,6 @@ async function runPickerSearch() {
 
       // মিডিয়া কন্টেইনারে ক্লিক করলে ভিডিও প্লে হবে (সিলেক্ট হবে না)
       mediaContainer.addEventListener("click", (e) => {
-        // যদি ইউজার সরাসরি সিলেক্ট বাটন বা প্লে বাটনে ক্লিক করে, তবে এই ইভেন্ট ওভাররাইড করার দরকার নেই
         if (e.target.classList.contains("select-btn")) return;
         
         e.stopPropagation(); 
@@ -1165,7 +1164,6 @@ async function runPickerSearch() {
 
           if (img) img.style.display = "none";
           if (playBtn) playBtn.style.display = "none";
-          // মনে রাখবেন: selectBtn এবং durationText হাইড করা হচ্ছে না, এগুলো ভিডিওর উপরেই থাকবে!
 
           const videoEl = document.createElement("video");
           videoEl.src = r.downloadUrl;
@@ -1177,7 +1175,7 @@ async function runPickerSearch() {
           videoEl.style.position = "absolute";
           videoEl.style.top = "0";
           videoEl.style.left = "0";
-          videoEl.style.zIndex = "5"; // ভিডিওর z-index কম রাখা হয়েছে যাতে সিলেক্ট বাটন (10) ও ডিউরেশন উপরে থাকে
+          videoEl.style.zIndex = "10"; // ভিডিও লেয়ার নিচে থাকবে, কিন্তু সিলেক্ট ও ডিউরেশন (30) উপরেই ভাসবে
 
           // ভিডিও শেষ হলে থাম্বনেইল ও প্লে বাটন ফিরিয়ে আনা
           videoEl.addEventListener("ended", () => {
@@ -1186,7 +1184,6 @@ async function runPickerSearch() {
             if (playBtn) playBtn.style.display = "flex";
           });
 
-          // থাম্বনেইলের ঠিক ওপরে ভিডিও ইনসার্ট করা
           mediaContainer.insertBefore(videoEl, img);
         }
       });
@@ -1210,6 +1207,7 @@ async function runPickerSearch() {
     resultsEl.innerHTML = `<p class="hint">${escapeHtml(t("errPrefix", { msg: err.message }))}</p>`;
   }
 }
+
 
 
 
