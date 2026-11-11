@@ -1112,7 +1112,7 @@ async function runPickerSearch() {
       const mismatch = orient !== "unknown" && orient !== wanted;
       const tile = document.createElement("div");
       tile.className = "result-tile" + (mismatch ? " mismatch" : "");
-      tile.style.position = "relative";
+      tile.style.cssText = "display: flex; flex-direction: column; background: var(--card-bg, #1e1e1e); border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color, #333);";
 
       // ভিডিওর ডিউরেশন ফরম্যাট করা (যেমন: 0:12)
       let durationText = "";
@@ -1122,36 +1122,65 @@ async function runPickerSearch() {
         durationText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
       }
 
-      // থাম্বনেইল, ✓ Select বাটন, প্লে বাটন ও ডিউরেশনসহ স্ট্রাকচার
+      // রেজুলেশন বা কোয়ালিটি ডেটা (যদি থাকে)
+      const resolutionText = r.resolution || "HD"; 
+      const qualityText = r.quality || "4K";
+
+      // আপনার স্ট্রাকচার অনুযায়ী HTML টেমপ্লেট
       tile.innerHTML = `
-        <div class="media-container" style="position: relative; width: 100%; height: 140px; overflow: hidden; border-radius: 4px; background: #000;">
+        <!-- MEDIA PREVIEW -->
+        <div class="media-preview" style="position: relative; width: 100%; height: 140px; background: #000; overflow: hidden;">
           <img src="${r.thumb}" alt="" class="thumb-img" style="width:100%; height:100%; object-fit:cover; display:block;" />
           
-          <button type="button" class="select-btn" title="Select" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.95); color:#fff; border:none; padding:4px 9px; font-size:11px; border-radius:4px; cursor:pointer; z-index:30; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">✓ Select</button>
+          <!-- Top Overlay -->
+          <div style="position: absolute; top: 8px; left: 8px; right: 8px; display: flex; justify-content: space-between; align-items: center; z-index: 30;">
+            <button type="button" class="select-btn" title="Select" style="background: rgba(0,128,0,0.95); color: #fff; border: none; padding: 4px 10px; font-size: 11px; border-radius: 4px; cursor: pointer; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">✓ Select</button>
+            <span style="background: rgba(0,0,0,0.7); color: #fff; padding: 2px 6px; font-size: 9px; border-radius: 3px; text-transform: uppercase; font-weight: bold;">${r.type === "video" ? "VIDEO" : "IMAGE"}</span>
+          </div>
 
-          ${durationText ? `<span class="duration-badge" style="position:absolute; top:6px; right:6px; background:rgba(0,0,0,0.85); color:#fff; padding:3px 7px; font-size:10px; border-radius:3px; z-index:30; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${durationText}</span>` : ""}
+          <!-- Center Overlay (Video Only) -->
+          ${r.type === "video" ? `
+            <div class="play-btn-overlay" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.65); color: #fff; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 25;" title="Preview video">▶</div>
+          ` : ""}
 
-          ${r.type === "video" ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.65); color:#fff; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:25;" title="Preview video">▶</div>` : ""}
+          <!-- Bottom Overlay (Video Only - Duration) -->
+          ${r.type === "video" && durationText ? `
+            <div style="position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.85); color: #fff; padding: 2px 6px; font-size: 10px; border-radius: 3px; z-index: 30; font-weight: bold;">${durationText}</div>
+          ` : ""}
         </div>
-        <div class="tile-footer" style="padding: 6px; display: flex; justify-content: space-between; align-items: center;">
-          <span class="src">${r.source}</span>
-          <span class="orient-badge">${mismatch ? "⚠ " : ""}${orientLabel[orient] || ""}</span>
+
+        <!-- MEDIA FOOTER -->
+        <div class="media-footer" style="padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: var(--text-color, #ccc);">
+          
+          <!-- Information Row -->
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span class="src" style="display: flex; align-items: center; gap: 4px; font-weight: 500;">🌐 ${r.source}</span>
+            <span class="orient-badge" style="opacity: 0.8;">${mismatch ? "⚠ " : ""}${orientLabel[orient] || ""}</span>
+          </div>
+
+          <!-- Divider -->
+          <div style="height: 1px; background: rgba(255,255,255,0.1); width: 100%;"></div>
+
+          <!-- Technical Row -->
+          <div style="display: flex; justify-content: space-between; align-items: center; opacity: 0.75; font-size: 10px;">
+            <span class="resolution">${resolutionText}</span>
+            <span class="quality-badge" style="background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 2px;">${qualityText}</span>
+          </div>
+
         </div>
       `;
 
-      const mediaContainer = tile.querySelector(".media-container");
-      const img = mediaContainer.querySelector(".thumb-img");
-      const playBtn = mediaContainer.querySelector(".play-btn-overlay");
+      const mediaPreview = tile.querySelector(".media-preview");
+      const img = mediaPreview.querySelector(".thumb-img");
+      const playBtn = mediaPreview.querySelector(".play-btn-overlay");
       const selectBtn = tile.querySelector(".select-btn");
 
-      // মিডিয়া কন্টেইনারে ক্লিক করলে ভিডিও প্লে হবে (সিলেক্ট হবে না)
-      mediaContainer.addEventListener("click", (e) => {
-        if (e.target.classList.contains("select-btn")) return;
-        
-        e.stopPropagation(); 
-        
-        if (r.type === "video") {
-          // আগে থেকে চলতে থাকা অন্য সব ভিডিও বন্ধ করা এবং থাম্বনেইল ফিরিয়ে আনা
+      // ভিডিও প্রিভিউ (শুধু প্লে বাটনে ক্লিক করলে)
+      if (r.type === "video" && playBtn) {
+        playBtn.addEventListener("click", (e) => {
+          e.stopPropagation(); 
+          
+          // অন্য চলমান ভিডিও বন্ধ করা
           document.querySelectorAll(".result-tile video").forEach((vid) => {
             vid.pause();
             const parent = vid.closest(".result-tile");
@@ -1163,32 +1192,25 @@ async function runPickerSearch() {
           });
 
           if (img) img.style.display = "none";
-          if (playBtn) playBtn.style.display = "none";
+          playBtn.style.display = "none";
 
           const videoEl = document.createElement("video");
           videoEl.src = r.downloadUrl;
           videoEl.controls = true;
           videoEl.autoplay = true;
-          videoEl.style.width = "100%";
-          videoEl.style.height = "100%";
-          videoEl.style.objectFit = "cover";
-          videoEl.style.position = "absolute";
-          videoEl.style.top = "0";
-          videoEl.style.left = "0";
-          videoEl.style.zIndex = "10"; // ভিডিও লেয়ার নিচে থাকবে, কিন্তু সিলেক্ট ও ডিউরেশন (30) উপরেই ভাসবে
+          videoEl.style.cssText = "width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0; z-index: 10;";
 
-          // ভিডিও শেষ হলে থাম্বনেইল ও প্লে বাটন ফিরিয়ে আনা
           videoEl.addEventListener("ended", () => {
             videoEl.remove();
             if (img) img.style.display = "block";
-            if (playBtn) playBtn.style.display = "flex";
+            playBtn.style.display = "flex";
           });
 
-          mediaContainer.insertBefore(videoEl, img);
-        }
-      });
+          mediaPreview.insertBefore(videoEl, img);
+        });
+      }
 
-      // শুধু '✓ Select' বাটনে ক্লিক করলেই ফুটেজ সিলেক্ট হবে
+      // সিলেক্ট বাটন হ্যান্ডলার
       if (selectBtn) {
         selectBtn.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -1207,6 +1229,7 @@ async function runPickerSearch() {
     resultsEl.innerHTML = `<p class="hint">${escapeHtml(t("errPrefix", { msg: err.message }))}</p>`;
   }
 }
+
 
 
 
