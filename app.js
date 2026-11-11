@@ -1122,14 +1122,14 @@ async function runPickerSearch() {
         durationText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
       }
 
-      // থাম্বনেইল, ✓ Select বাটন, প্লে বাটন ও ডিউরেশনসহ স্ট্রাকচার
+      // থাম্বনেইল, ✓ Select বাটন, প্লে বাটন এবং কমপ্যাক্ট র‍্যাপ-কন্টেন্ট ডিউরেশন ব্যাজ
       tile.innerHTML = `
         <div class="media-container" style="position: relative; width: 100%; height: 140px; overflow: hidden; border-radius: 4px; background: #000;">
           <img src="${r.thumb}" alt="" class="thumb-img" style="width:100%; height:100%; object-fit:cover; display:block;" />
           
           <button type="button" class="select-btn" title="Select" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.95); color:#fff; border:none; padding:4px 9px; font-size:11px; border-radius:4px; cursor:pointer; z-index:30; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">✓ Select</button>
 
-          ${durationText ? `<span class="duration-badge" style="position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,0.85); color:#fff; padding:3px 7px; font-size:10px; border-radius:3px; z-index:30; display:inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${durationText}</span>` : ""}
+          ${durationText ? `<span class="duration-badge" style="position:absolute; top:6px; right:6px; background:rgba(0,0,0,0.85); color:#fff; padding:2px 6px; font-size:10px; border-radius:3px; z-index:30; font-weight: bold; display:inline-block; width:auto; height:auto; line-height:normal;">${durationText}</span>` : ""}
 
           ${r.type === "video" ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.65); color:#fff; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:25;" title="Preview video">▶</div>` : ""}
         </div>
@@ -1144,13 +1144,11 @@ async function runPickerSearch() {
       const playBtn = mediaContainer.querySelector(".play-btn-overlay");
       const selectBtn = tile.querySelector(".select-btn");
 
-      // মিডিয়া কন্টেইনারে ক্লিক করলে ভিডিও প্লে হবে (সিলেক্ট হবে না)
-      mediaContainer.addEventListener("click", (e) => {
-        if (e.target.classList.contains("select-btn")) return;
-        
-        e.stopPropagation(); 
-        
-        if (r.type === "video") {
+      // শুধু প্লে বাটনে (▶) ক্লিক করলেই কেবল ওই ভিডিওটি লোড হয়ে প্লে হবে (আগে থেকে কোনো ভিডিও লোড হবে না)
+      if (r.type === "video" && playBtn) {
+        playBtn.addEventListener("click", (e) => {
+          e.stopPropagation(); 
+          
           // আগে থেকে চলতে থাকা অন্য সব ভিডিও বন্ধ করা এবং থাম্বনেইল ফিরিয়ে আনা
           document.querySelectorAll(".result-tile video").forEach((vid) => {
             vid.pause();
@@ -1163,8 +1161,9 @@ async function runPickerSearch() {
           });
 
           if (img) img.style.display = "none";
-          if (playBtn) playBtn.style.display = "none";
+          playBtn.style.display = "none";
 
+          // এই মুহূর্তে শুধু ইউজার যেটিতে ক্লিক করেছে, সেটুকুই ভিডিও এলিমেন্ট তৈরি করে লোড হবে
           const videoEl = document.createElement("video");
           videoEl.src = r.downloadUrl;
           videoEl.controls = true;
@@ -1175,18 +1174,18 @@ async function runPickerSearch() {
           videoEl.style.position = "absolute";
           videoEl.style.top = "0";
           videoEl.style.left = "0";
-          videoEl.style.zIndex = "10"; // ভিডিও লেয়ার নিচে থাকবে, কিন্তু সিলেক্ট ও ডিউরেশন (30) উপরেই ভাসবে
+          videoEl.style.zIndex = "10";
 
           // ভিডিও শেষ হলে থাম্বনেইল ও প্লে বাটন ফিরিয়ে আনা
           videoEl.addEventListener("ended", () => {
             videoEl.remove();
             if (img) img.style.display = "block";
-            if (playBtn) playBtn.style.display = "flex";
+            playBtn.style.display = "flex";
           });
 
           mediaContainer.insertBefore(videoEl, img);
-        }
-      });
+        });
+      }
 
       // শুধু '✓ Select' বাটনে ক্লিক করলেই ফুটেজ সিলেক্ট হবে
       if (selectBtn) {
@@ -1207,6 +1206,8 @@ async function runPickerSearch() {
     resultsEl.innerHTML = `<p class="hint">${escapeHtml(t("errPrefix", { msg: err.message }))}</p>`;
   }
 }
+
+
 
 
 
