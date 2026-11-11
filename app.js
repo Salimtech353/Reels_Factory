@@ -1044,7 +1044,9 @@ async function runPickerSearch() {
   $("#pickerPageLabel").textContent = t("pageLabel", { n: pickerPage });
   $("#pickerPrevBtn").disabled = pickerPage <= 1;
   
-  // ডায়ালগের টাইটেলে মোট ডিউরেশন এবং স্ক্রিপ্ট/সাবটাইটেল (কলাপসিবল সহ) সেট করার লজিক
+  const queryVal = $("#pickerQuery").value.trim();
+
+  // ডায়ালগের টাইটেলে সার্চ কিওয়ার্ড, মোট ডিউরেশন এবং স্ক্রিপ্ট দেখানোর লজিক
   const modalTitleEl = $("#pickerModalTitle") || document.querySelector(".modal-title") || document.querySelector("#modal h3");
   if (modalTitleEl && typeof activeSeg !== 'undefined' && activeSeg) {
     const D = activeSeg.n + (activeSeg.tp || 0) / 2 + (activeSeg.tn || 0) / 2;
@@ -1053,12 +1055,12 @@ async function runPickerSearch() {
     const isLong = scriptText.length > 80;
 
     modalTitleEl.innerHTML = `
-      <div style="font-weight: bold; margin-bottom: 4px;">
-        Pick media — ${dSec}s
+      <div style="font-weight: bold; font-size: 15px; margin-bottom: 4px;">
+        ${escapeHtml(queryVal || "Pick media")} — ${dSec}s
       </div>
       ${scriptText ? `
-        <div style="font-size: 12px; font-weight: normal; opacity: 0.85; background: rgba(128,128,128,0.1); padding: 4px 8px; border-radius: 4px; margin-top: 4px;">
-          <div class="script-content" style="${isLong ? 'max-height: 36px; overflow: hidden;' : ''}">${escapeHtml(scriptText)}</div>
+        <div style="font-size: 12px; font-weight: normal; opacity: 0.85; background: rgba(128,128,128,0.1); padding: 6px 10px; border-radius: 4px; margin-top: 4px; text-align: left;">
+          <div class="script-content" style="${isLong ? 'max-height: 38px; overflow: hidden;' : ''}">${escapeHtml(scriptText)}</div>
           ${isLong ? `<button type="button" class="toggle-script-btn" style="background: none; border: none; color: #0066cc; text-decoration: underline; cursor: pointer; font-size: 11px; padding: 2px 0; margin-top: 2px;">See more</button>` : ''}
         </div>
       ` : ''}
@@ -1073,7 +1075,7 @@ async function runPickerSearch() {
           content.style.maxHeight = "";
           toggleBtn.textContent = "See less";
         } else {
-          content.style.maxHeight = "36px";
+          content.style.maxHeight = "38px";
           toggleBtn.textContent = "See more";
         }
       });
@@ -1081,9 +1083,8 @@ async function runPickerSearch() {
   }
 
   try {
-    const query = $("#pickerQuery").value.trim();
     const type = $("#pickerType").value;
-    const results = await searchMedia(query, type, pickerPage);
+    const results = await searchMedia(queryVal, type, pickerPage);
     
     if (!results.length) {
       resultsEl.innerHTML = `<p class="hint">${t("noResults")}</p>`;
@@ -1108,14 +1109,13 @@ async function runPickerSearch() {
         durationText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
       }
 
-      // কার্ডের ভেতর থাম্বনেইল, প্লে বাটন, সিলেক্ট আইকন ও ডিউরেশন ব্যাজ রেন্ডার করা
       tile.innerHTML = `
-        <div class="media-container" style="position: relative; width: 100%; height: 140px; cursor: pointer;">
+        <div class="media-container" style="position: relative; width: 100%; height: 140px;">
           <img src="${r.thumb}" alt="" class="thumb-img" style="width:100%; height:100%; object-fit:cover;" />
           
           ${r.type === "video" ? `
-            <button class="select-btn" title="Select video" style="position:absolute; top:6px; left:6px; background:rgba(0,0,0,0.75); color:#fff; border:none; padding:3px 6px; font-size:11px; border-radius:4px; cursor:pointer; z-index:3;">✓ Select</button>
-            <div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.6); color:#fff; border-radius:50%; width:36px; height:36px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:2;">▶</div>
+            <button type="button" class="select-btn" title="Select video" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.85); color:#fff; border:none; padding:3px 8px; font-size:11px; border-radius:4px; cursor:pointer; z-index:3;">✓ Select</button>
+            <div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.6); color:#fff; border-radius:50%; width:36px; height:36px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:2;" title="Preview video">▶</div>
           ` : ""}
 
           ${durationText ? `<span class="duration-badge" style="position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,0.7); color:#fff; padding:2px 4px; font-size:10px; border-radius:3px;">${durationText}</span>` : ""}
@@ -1131,10 +1131,10 @@ async function runPickerSearch() {
       const playOverlay = mediaContainer.querySelector(".play-btn-overlay");
       const selectBtn = mediaContainer.querySelector(".select-btn");
 
-      // ১. ভিডিও প্রিভিউ প্লে করার লজিক (শুধু প্লে বাটনে ক্লিক করলে কাজ করবে)
+      // ১. শুধু প্লে বাটনে ক্লিক করলে ভিডিও প্রিভিউ হবে (সিলেক্ট হবে না)
       if (r.type === "video" && playOverlay) {
         playOverlay.addEventListener("click", (e) => {
-          e.stopPropagation(); // কার্ড বা সিলেকশন ট্রিগার হওয়া আটকাবে
+          e.stopPropagation();
           
           document.querySelectorAll(".result-tile video").forEach((vid) => {
             vid.pause();
@@ -1171,7 +1171,7 @@ async function runPickerSearch() {
         });
       }
 
-      // কমন সিলেকশন ফাংশন
+      // কমন সিলেকশন হ্যান্ডলার
       const handleSelection = () => {
         if (activeSeg) {
           applyMediaChoice(activeSeg, r);
@@ -1189,7 +1189,7 @@ async function runPickerSearch() {
         });
       }
 
-      // ৩. পুরো কার্ডের বা ফাঁকা জায়গার যেকোনো জায়গায় ক্লিক করলে ফুটেজটি সিলেক্ট হবে
+      // ৩. কার্ডের ফাঁকা জায়গায় বা ফুটারে ক্লিক করলে সিলেক্ট হবে
       tile.addEventListener("click", () => {
         handleSelection();
       });
@@ -1200,6 +1200,7 @@ async function runPickerSearch() {
     resultsEl.innerHTML = `<p class="hint">${escapeHtml(t("errPrefix", { msg: err.message }))}</p>`;
   }
 }
+
 
 
 
