@@ -1,6 +1,8 @@
 // [Cloudflare Pages Function] POST /api/search-media
 // body: { pixabayApiKey, pexelsApiKey, apiKey, query, type: 'videos'|'photos', page, orientation }
-// returns: { results: [{thumb, downloadUrl, type:'video'|'photo', source, width, height}] }
+// returns: { results: [{thumb, downloadUrl, previewUrl, type:'video'|'photo', source, width, height, duration}] }
+//   downloadUrl = রেন্ডারের জন্য সেরা মানের ফাইল
+//   previewUrl  = মডালে প্লে করার জন্য হালকা (ছোট) mp4 — দ্রুত লোড হয়
 
 async function handler(req, res) {
   if (req.method !== "POST") {
@@ -29,7 +31,7 @@ async function handler(req, res) {
     let pixabayResults = [];
     let pexelsResults = [];
 
-    // ১. সমান্তভাবে বা আলাদাভাবে উভয় সোর্স থেকে Full HD মিডিয়া ফেচ করার চেষ্টা করা
+    // ১. উভয় সোর্স থেকে মিডিয়া ফেচ (একটা ব্যর্থ হলেও অন্যটা চলবে)
     if (pixKey) {
       try {
         pixabayResults = await searchPixabay(pixKey, query, type, page || 1, orientation);
@@ -46,22 +48,18 @@ async function handler(req, res) {
       }
     }
 
-    // ২. যদি কোনো সোর্স থেকেই ডেটা না আসে
+    // ২. কোনো সোর্স থেকেই ডেটা না এলে
     if (pixabayResults.length === 0 && pexelsResults.length === 0) {
       throw new Error("No media found from any provider");
     }
 
-    // ৩. রেন্ডম বা মিক্সড করার লজিক (৫-৫ অথবা এলোমেলোভাবে পেয়ার করে সাজানো)
+    // ৩. পালাক্রমে মেশানো + শাফল
     let combinedResults = [];
-    let maxLength = Math.max(pixabayResults.length, pexelsResults.length);
-
+    const maxLength = Math.max(pixabayResults.length, pexelsResults.length);
     for (let i = 0; i < maxLength; i++) {
-      // রেন্ডম অর্ডারে সাজানোর জন্য বা অল্টারনেটিভলি পুশ করার জন্য
       if (pixabayResults[i]) combinedResults.push(pixabayResults[i]);
       if (pexelsResults[i]) combinedResults.push(pexelsResults[i]);
     }
-
-    // রেজাল্টগুলোকে একটু সফলভাবে শাফেল (Randomize) করে দেওয়া যাতে মিক্সড দেখায়
     combinedResults = shuffleArray(combinedResults);
 
     return res.status(200).json({ results: combinedResults });
@@ -70,7 +68,7 @@ async function handler(req, res) {
   }
 }
 
-// অ্যারে শাফেল করার ছোট ফাংশন (Randomize order)
+// অ্যারে শাফেল (Randomize order)
 function shuffleArray(array) {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -80,7 +78,7 @@ function shuffleArray(array) {
 }
 
 // ------------------------------------------------------------
-// Pexels API (Full HD Only Filter)
+// Pexels API
 // ------------------------------------------------------------
 async function searchPexels(apiKey, query, type, page, orientation) {
   const isVideo = type === "videos";
@@ -95,14 +93,20 @@ async function searchPexels(apiKey, query, type, page, orientation) {
 
   if (isVideo) {
     return (data.videos || []).map((v) => {
-      const files = (v.video_files || []).slice();
-      // শুধুমাত্র Full HD বা কাছাকাছি সেরা রেজুলেশন ফিল্টার করা
+      const files = (v.video_files || []).filter((f) => f.link && (!f.file_type || f.file_type === "video/mp4"));
+      // রেন্ডারের জন্য: Full HD বা কাছাকাছি সেরা রেজুলেশন
       const bestVideo = files.find((f) => f.width >= 1280 || f.height >= 720) || files[0];
+      // প্রিভিউয়ের জন্য: ছোট দিক ≤ ৭২০ এর মধ্যে সবচেয়ে বড়টা; না থাকলে সবচেয়ে ছোটটা
+      const small = files.filter((f) => Math.min(f.width || 0, f.height || 0) <= 720);
+      const previewFile = small.length
+        ? small.sort((a, b) => (b.width || 0) * (b.height || 0) - (a.width || 0) * (a.height || 0))[0]
+        : files.slice().sort((a, b) => (a.width || 0) * (a.height || 0) - (b.width || 0) * (b.height || 0))[0];
 
       return {
         type: "video",
         thumb: v.image,
         downloadUrl: bestVideo ? bestVideo.link : v.video_files?.[0]?.link,
+        previewUrl: previewFile ? previewFile.link : undefined,
         duration: v.duration || null,
         source: "Pexels",
         width: bestVideo?.width || v.width,
@@ -122,7 +126,7 @@ async function searchPexels(apiKey, query, type, page, orientation) {
 }
 
 // ------------------------------------------------------------
-// Pixabay API (Full HD Only Filter)
+// Pixabay API
 // ------------------------------------------------------------
 async function searchPixabay(apiKey, query, type, page, orientation) {
   const isVideo = type === "videos";
@@ -139,11 +143,13 @@ async function searchPixabay(apiKey, query, type, page, orientation) {
   if (isVideo) {
     return (data.hits || []).map((v) => {
       const vObj = v.videos || {};
-      const bestVid = vObj.large || vObj.medium || vObj.small;
+      const bestVid = vObj.large?.url ? vObj.large : vObj.medium?.url ? vObj.medium : vObj.small;
+      const previewVid = vObj.small?.url ? vObj.small : vObj.tiny?.url ? vObj.tiny : vObj.medium;
       return {
         type: "video",
-        thumb: vObj.tiny?.thumbnail || vObj.small?.thumbnail,
+        thumb: vObj.small?.thumbnail || vObj.medium?.thumbnail || vObj.tiny?.thumbnail,
         downloadUrl: bestVid?.url,
+        previewUrl: previewVid?.url,
         duration: v.duration || null,
         source: "Pixabay",
         width: bestVid?.width,
@@ -191,5 +197,4 @@ export async function onRequest(context) {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
   });
-    }
-        
+}
