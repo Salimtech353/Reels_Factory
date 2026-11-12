@@ -78,6 +78,33 @@ function shuffleArray(array) {
 }
 
 // ------------------------------------------------------------
+// রেজোলিউশন বাছাই: প্রথমে Full HD, না থাকলে HD। 4K/QHD ও SD কখনোই নয়।
+// মাপ ধরা হয় লম্বা দিক (long side) দিয়ে, তাই ল্যান্ডস্কেপ ও পোর্ট্রেট দুটোতেই একই নিয়ম।
+//   Full HD : লম্বা দিক ১৮০০–২২০০ px (যেমন 1920x1080, 1080x1920)
+//   HD      : লম্বা দিক ১২০০–১৭৯৯ px (যেমন 1280x720, 720x1280)
+//   বাদ     : ২২০০ px-এর বেশি (4K/QHD) আর ১২০০ px-এর কম (SD)
+// ------------------------------------------------------------
+function resTier(w, h) {
+  const L = Math.max(w || 0, h || 0);
+  if (L >= 1800 && L <= 2200) return 2; // Full HD
+  if (L >= 1200 && L < 1800) return 1; // HD
+  return 0; // বাদ
+}
+
+// ভিডিওর ফাইল-তালিকা [{url,width,height}] থেকে সেরাটা: আগে Full HD (১৯২০-এর সবচেয়ে কাছের), না থাকলে HD; কিছুই না মিললে null
+function pickBestFile(files) {
+  let best = null;
+  for (const f of files) {
+    if (!f || !f.url) continue;
+    const tier = resTier(f.width, f.height);
+    if (!tier) continue;
+    const dist = Math.abs(Math.max(f.width, f.height) - (tier === 2 ? 1920 : 1280));
+    if (!best || tier > best.tier || (tier === best.tier && dist < best.dist)) best = { f, tier, dist };
+  }
+  return best ? best.f : null;
+}
+
+// ------------------------------------------------------------
 // Pexels API
 // ------------------------------------------------------------
 async function searchPexels(apiKey, query, type, page, orientation) {
@@ -94,8 +121,9 @@ async function searchPexels(apiKey, query, type, page, orientation) {
   if (isVideo) {
     return (data.videos || []).map((v) => {
       const files = (v.video_files || []).filter((f) => f.link && (!f.file_type || f.file_type === "video/mp4"));
-      // রেন্ডারের জন্য: Full HD বা কাছাকাছি সেরা রেজুলেশন
-      const bestVideo = files.find((f) => f.width >= 1280 || f.height >= 720) || files[0];
+      // রেন্ডারের জন্য: আগে Full HD, না থাকলে HD (4K/SD নয়); কোনোটাই না থাকলে এই ভিডিও বাদ
+      const bestVideo = pickBestFile(files.map((f) => ({ url: f.link, width: f.width, height: f.height })));
+      if (!bestVideo) return null;
       // প্রিভিউয়ের জন্য: ছোট দিক ≤ ৭২০ এর মধ্যে সবচেয়ে বড়টা; না থাকলে সবচেয়ে ছোটটা
       const small = files.filter((f) => Math.min(f.width || 0, f.height || 0) <= 720);
       const previewFile = small.length
@@ -105,24 +133,51 @@ async function searchPexels(apiKey, query, type, page, orientation) {
       return {
         type: "video",
         thumb: v.image,
-        downloadUrl: bestVideo ? bestVideo.link : v.video_files?.[0]?.link,
+        downloadUrl: bestVideo.url,
         previewUrl: previewFile ? previewFile.link : undefined,
         duration: v.duration || null,
         source: "Pexels",
-        width: bestVideo?.width || v.width,
-        height: bestVideo?.height || v.height,
+        width: bestVideo.width,
+        height: bestVideo.height,
       };
-    });
+    }).filter(Boolean);
   }
 
-  return (data.photos || []).map((p) => ({
-    type: "photo",
-    thumb: p.src.medium,
-    downloadUrl: p.src.original || p.src.large2x || p.src.large,
-    source: "Pexels",
-    width: p.width,
-    height: p.height,
-  }));
+  return (data.photos || [])
+    .map((p) => {
+      const pick = pickPexelsPhoto(p);
+      if (!pick) return null;
+      return {
+        type: "photo",
+        thumb: p.src.medium,
+        downloadUrl: pick.url,
+        source: "Pexels",
+        width: pick.width,
+        height: pick.height,
+      };
+    })
+    .filter(Boolean);
+}
+
+// Pexels ছবি: আসল মাপ Full HD/HD রেঞ্জে হলে original; ২২০০ px-এর বেশি (4K+) হলে Pexels-এর CDN থেকে লম্বা দিক ১৯২০ px করে নামানো;
+// ১২০০ px-এর কম (SD) হলে বাদ।
+function pickPexelsPhoto(p) {
+  const w = p.width || 0;
+  const h = p.height || 0;
+  const L = Math.max(w, h);
+  const base = p.src && p.src.original;
+  if (!base || L < 1200) return null;
+  if (L > 2200) {
+    const landscape = w >= h;
+    const k = 1920 / L;
+    const sep = base.includes("?") ? "&" : "?";
+    return {
+      url: `${base}${sep}auto=compress&cs=tinysrgb&${landscape ? "w" : "h"}=1920`,
+      width: landscape ? 1920 : Math.round(w * k),
+      height: landscape ? Math.round(h * k) : 1920,
+    };
+  }
+  return { url: base, width: w, height: h };
 }
 
 // ------------------------------------------------------------
@@ -143,7 +198,9 @@ async function searchPixabay(apiKey, query, type, page, orientation) {
   if (isVideo) {
     return (data.hits || []).map((v) => {
       const vObj = v.videos || {};
-      const bestVid = vObj.large?.url ? vObj.large : vObj.medium?.url ? vObj.medium : vObj.small;
+      // আগে Full HD, না থাকলে HD (4K/SD নয়); কোনোটাই না থাকলে এই ভিডিও বাদ
+      const bestVid = pickBestFile(["large", "medium", "small", "tiny"].map((k) => vObj[k]).filter(Boolean));
+      if (!bestVid) return null;
       const previewVid = vObj.small?.url ? vObj.small : vObj.tiny?.url ? vObj.tiny : vObj.medium;
       return {
         type: "video",
@@ -155,17 +212,42 @@ async function searchPixabay(apiKey, query, type, page, orientation) {
         width: bestVid?.width,
         height: bestVid?.height,
       };
-    });
+    }).filter(Boolean);
   }
 
-  return (data.hits || []).map((p) => ({
-    type: "photo",
-    thumb: p.webformatURL,
-    downloadUrl: p.fullHDURL || p.imageURL || p.largeImageURL || p.webformatURL,
-    source: "Pixabay",
-    width: p.imageWidth,
-    height: p.imageHeight,
-  }));
+  return (data.hits || [])
+    .map((p) => {
+      const pick = pickPixabayPhoto(p);
+      if (!pick) return null;
+      return {
+        type: "photo",
+        thumb: p.webformatURL,
+        downloadUrl: pick.url,
+        source: "Pixabay",
+        width: pick.width,
+        height: pick.height,
+      };
+    })
+    .filter(Boolean);
+}
+
+// Pixabay ছবি: fullHDURL (লম্বা দিক ১৯২০) থাকলে সেটা → Full HD; আসল ছবি নিজেই Full HD রেঞ্জে হলে imageURL;
+// না হলে largeImageURL (লম্বা দিক ১২৮০) → HD। ১২০০ px-এর কম (SD) আসল ছবি বাদ।
+// width/height এখানে বাছাই করা ফাইলের আনুমানিক আসল মাপ (আসল ছবির নয়)।
+function pickPixabayPhoto(p) {
+  const w = p.imageWidth || 0;
+  const h = p.imageHeight || 0;
+  const L = Math.max(w, h);
+  if (L < 1200) return null;
+  const scaled = (target) => {
+    const t = Math.min(L, target);
+    const k = t / L;
+    return { width: Math.round(w * k), height: Math.round(h * k) };
+  };
+  if (p.fullHDURL) return { url: p.fullHDURL, ...scaled(1920) };
+  if (p.imageURL && L >= 1800 && L <= 2200) return { url: p.imageURL, width: w, height: h };
+  if (p.largeImageURL) return { url: p.largeImageURL, ...scaled(1280) };
+  return null;
 }
 
 // ============================================================
