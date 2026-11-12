@@ -1064,9 +1064,9 @@ function openPicker(seg) {
   runPickerSearch();
 }
 
-$("#pickerClose").addEventListener("click", () => (modal.hidden = true));
+$("#pickerClose").addEventListener("click", () => { stopAllPreviews(); modal.hidden = true; });
 modal.addEventListener("click", (e) => {
-  if (e.target === modal) modal.hidden = true;
+  if (e.target === modal) { stopAllPreviews(); modal.hidden = true; }
 });
 $("#pickerSearchBtn").addEventListener("click", () => {
   pickerPage = 1;
@@ -1087,54 +1087,75 @@ $("#pickerNextBtn").addEventListener("click", () => {
 
 
 
+// ভিডিওর ডিউরেশন ফরম্যাট (যেমন: 0:12)
+function fmtClip(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// প্রিভিউয়ের জন্য প্লে-যোগ্য URL: ছোট/প্রিভিউ লিংক আগে, না থাকলে downloadUrl
+function previewSrc(r) {
+  return r.previewUrl || r.previewVideo || r.videoPreview || r.videoUrl || r.preview || r.downloadUrl;
+}
+
+// চলতে থাকা সব প্রিভিউ ভিডিও বন্ধ করে থাম্বনেইল ফিরিয়ে আনে
+function stopAllPreviews() {
+  document.querySelectorAll("#pickerResults .result-tile").forEach((tile) => {
+    const vid = tile.querySelector(".preview-video");
+    if (!vid) return;
+    vid.pause();
+    vid.removeAttribute("src");
+    vid.load();
+    vid.remove();
+    const th = tile.querySelector(".thumb-img");
+    if (th) th.style.display = "block";
+    const po = tile.querySelector(".play-btn-overlay");
+    if (po) po.style.display = "flex";
+  });
+}
+
 async function runPickerSearch() {
   const resultsEl = $("#pickerResults");
   resultsEl.innerHTML = `<p class="hint">${t("searching")}</p>`;
   $("#pickerPageLabel").textContent = t("pageLabel", { n: pickerPage });
   $("#pickerPrevBtn").disabled = pickerPage <= 1;
-  
+
   try {
     const query = $("#pickerQuery").value.trim();
     const type = $("#pickerType").value;
     const results = await searchMedia(query, type, pickerPage);
-    
+
     if (!results.length) {
       resultsEl.innerHTML = `<p class="hint">${t("noResults")}</p>`;
       return;
     }
-    
+
     resultsEl.innerHTML = "";
     const wanted = targetOrientation();
     const orientLabel = { landscape: t("landscape"), portrait: t("portrait"), square: t("square"), unknown: "" };
-    
+
     results.forEach((r) => {
       const orient = mediaOrientation(r);
       const mismatch = orient !== "unknown" && orient !== wanted;
+      const isVideo = r.type === "video";
+      const durationText = isVideo && r.duration ? fmtClip(r.duration) : "";
+
       const tile = document.createElement("div");
       tile.className = "result-tile" + (mismatch ? " mismatch" : "");
       tile.style.position = "relative";
 
-      // ভিডিওর ডিউরেশন ফরম্যাট করা (যেমন: 0:12)
-      let durationText = "";
-      if (r.type === "video" && r.duration) {
-        const mins = Math.floor(r.duration / 60);
-        const secs = Math.floor(r.duration % 60);
-        durationText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-      }
-
-      // থাম্বনেইল, ✓ Select বাটন, প্লে বাটন ও ডিউরেশনসহ স্ট্রাকচার
+      // ডিউরেশন এখন ফুটারে (ফ্রেমের বাইরে) — তাই ক্রপ/overflow/ভিডিও কন্ট্রোলের নিচে আর হারাবে না
       tile.innerHTML = `
-        <div class="media-container" style="position: relative; width: 100%; height: 140px; overflow: hidden; border-radius: 4px; background: #000;">
-          <img src="${r.thumb}" alt="" class="thumb-img" style="width:100%; height:100%; object-fit:cover; display:block;" />
-          
-          <button type="button" class="select-btn" title="Select" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.95); color:#fff; border:none; padding:4px 9px; font-size:11px; border-radius:4px; cursor:pointer; z-index:30; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">✓ Select</button>
+        <div class="media-container" style="position:relative; width:100%; height:140px; overflow:hidden; border-radius:4px; background:#000;">
+          <img src="${escapeAttr(r.thumb || "")}" alt="" class="thumb-img" style="width:100%; height:100%; object-fit:cover; display:block;" />
 
-          ${durationText ? `<span class="duration-badge" style="position:absolute; top:6px; right:6px; background:rgba(0,0,0,0.85); color:#fff; padding:3px 7px; font-size:10px; border-radius:3px; z-index:30; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${durationText}</span>` : ""}
+          <button type="button" class="select-btn" title="Select" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.95); color:#fff; border:none; padding:4px 9px; font-size:11px; border-radius:4px; cursor:pointer; z-index:30; box-shadow:0 2px 4px rgba(0,0,0,0.3);">✓ Select</button>
 
-          ${r.type === "video" ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.65); color:#fff; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:25;" title="Preview video">▶</div>` : ""}
+          ${isVideo ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.65); color:#fff; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:25;" title="Preview video">▶</div>` : ""}
         </div>
-        <div class="tile-footer" style="padding: 6px; display: flex; justify-content: space-between; align-items: center;">
-          <span class="src">${r.source}</span>
+        <div class="tile-footer" style="padding:6px; display:flex; justify-content:space-between; align-items:center; gap:6px;">
+          <span class="src">${escapeHtml(String(r.source || ""))}</span>
+          ${durationText ? `<span class="duration-badge" style="display:inline-flex !important; align-items:center; gap:3px; background:rgba(0,0,0,0.85); color:#fff; padding:2px 7px; font-size:11px; font-weight:bold; border-radius:3px; position:static !important; opacity:1 !important; visibility:visible !important;">⏱ ${durationText}</span>` : ""}
           <span class="orient-badge">${mismatch ? "⚠ " : ""}${orientLabel[orient] || ""}</span>
         </div>
       `;
@@ -1144,62 +1165,63 @@ async function runPickerSearch() {
       const playBtn = mediaContainer.querySelector(".play-btn-overlay");
       const selectBtn = tile.querySelector(".select-btn");
 
-      // মিডিয়া কন্টেইনারে ক্লিক করলে ভিডিও প্লে হবে (সিলেক্ট হবে না)
-      mediaContainer.addEventListener("click", (e) => {
-        if (e.target.classList.contains("select-btn")) return;
-        
-        e.stopPropagation(); 
-        
-        if (r.type === "video") {
-          // আগে থেকে চলতে থাকা অন্য সব ভিডিও বন্ধ করা এবং থাম্বনেইল ফিরিয়ে আনা
-          document.querySelectorAll(".result-tile video").forEach((vid) => {
-            vid.pause();
-            const parent = vid.closest(".result-tile");
-            const thumb = parent.querySelector(".thumb-img");
-            if (thumb) thumb.style.display = "block";
-            const pOverlay = parent.querySelector(".play-btn-overlay");
-            if (pOverlay) pOverlay.style.display = "flex";
-            vid.remove();
-          });
-
-          if (img) img.style.display = "none";
-          if (playBtn) playBtn.style.display = "none";
-
-          const videoEl = document.createElement("video");
-          videoEl.src = r.downloadUrl;
-          videoEl.controls = true;
-          videoEl.autoplay = true;
-          videoEl.style.width = "100%";
-          videoEl.style.height = "100%";
-          videoEl.style.objectFit = "cover";
-          videoEl.style.position = "absolute";
-          videoEl.style.top = "0";
-          videoEl.style.left = "0";
-          videoEl.style.zIndex = "10"; // ভিডিও লেয়ার নিচে থাকবে, কিন্তু সিলেক্ট ও ডিউরেশন (30) উপরেই ভাসবে
-
-          // ভিডিও শেষ হলে থাম্বনেইল ও প্লে বাটন ফিরিয়ে আনা
-          videoEl.addEventListener("ended", () => {
-            videoEl.remove();
-            if (img) img.style.display = "block";
-            if (playBtn) playBtn.style.display = "flex";
-          });
-
-          mediaContainer.insertBefore(videoEl, img);
-        }
-      });
-
-      // শুধু '✓ Select' বাটনে ক্লিক করলেই ফুটেজ সিলেক্ট হবে
-      if (selectBtn) {
-        selectBtn.addEventListener("click", (e) => {
+      // শুধু প্লে বাটনে (▶) ক্লিক করলে ওই ভিডিও প্রিভিউ চলবে
+      if (isVideo && playBtn) {
+        playBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (activeSeg) {
-            applyMediaChoice(activeSeg, r);
-            activeSeg.query = $("#pickerQuery").value.trim();
-            renderSegments();
+          stopAllPreviews();
+
+          img.style.display = "none";
+          playBtn.style.display = "none";
+
+          const src = previewSrc(r);
+          const videoEl = document.createElement("video");
+          videoEl.className = "preview-video";
+          videoEl.controls = true;
+          videoEl.muted = true; // ব্রাউজারের autoplay নীতির জন্য জরুরি
+          videoEl.playsInline = true;
+          videoEl.preload = "auto";
+          videoEl.setAttribute("playsinline", "");
+          videoEl.style.cssText = "position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:10; background:#000;";
+
+          const restore = () => {
+            videoEl.pause();
+            videoEl.remove();
+            img.style.display = "block";
+            playBtn.style.display = "flex";
+          };
+
+          videoEl.addEventListener("ended", restore);
+          videoEl.addEventListener("error", () => {
+            console.error("Preview load failed:", src, videoEl.error);
+            restore();
+            toast(t("errPrefix", { msg: "preview" }), "err");
+          });
+
+          videoEl.src = src;
+          mediaContainer.appendChild(videoEl);
+          const p = videoEl.play();
+          if (p && p.catch) {
+            p.catch((err) => {
+              if (err && err.name === "AbortError") return; // দ্রুত অন্য ভিডিও চালালে স্বাভাবিক
+              console.error("Preview play blocked:", err);
+              restore();
+            });
           }
-          modal.hidden = true;
         });
       }
+
+      // শুধু '✓ Select' বাটনে ক্লিক করলেই ফুটেজ সিলেক্ট হবে
+      selectBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        stopAllPreviews();
+        if (activeSeg) {
+          applyMediaChoice(activeSeg, r);
+          activeSeg.query = $("#pickerQuery").value.trim();
+          renderSegments();
+        }
+        modal.hidden = true;
+      });
 
       resultsEl.appendChild(tile);
     });
@@ -1207,18 +1229,6 @@ async function runPickerSearch() {
     resultsEl.innerHTML = `<p class="hint">${escapeHtml(t("errPrefix", { msg: err.message }))}</p>`;
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
 
 $("#pickerUpload").addEventListener("change", async (e) => {
   const file = e.target.files[0];
