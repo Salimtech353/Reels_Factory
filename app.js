@@ -1093,24 +1093,46 @@ function fmtClip(sec) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-// প্রিভিউয়ের জন্য প্লে-যোগ্য URL: ছোট/প্রিভিউ লিংক আগে, না থাকলে downloadUrl
+// প্রিভিউয়ের জন্য প্লে-যোগ্য URL: হালকা প্রিভিউ লিংক আগে, না থাকলে downloadUrl
 function previewSrc(r) {
   return r.previewUrl || r.previewVideo || r.videoPreview || r.videoUrl || r.preview || r.downloadUrl;
 }
 
-// চলতে থাকা সব প্রিভিউ ভিডিও বন্ধ করে থাম্বনেইল ফিরিয়ে আনে
+// পিকার টাইলের স্টাইল — style.css-এর কোনো নিয়ম যেন ব্যাজ/প্লে বাটন লুকাতে বা ক্লিক আটকাতে না পারে
+(function injectPickerStyle() {
+  if (document.getElementById("pickerTileStyle")) return;
+  const st = document.createElement("style");
+  st.id = "pickerTileStyle";
+  const P = "#pickerResults .result-tile";
+  st.textContent = `
+    ${P} .media-container{position:relative!important;width:100%!important;height:140px!important;overflow:hidden!important;border-radius:6px!important;background:#000!important;}
+    ${P} .media-container .thumb-img{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;object-fit:cover!important;display:block;pointer-events:none!important;}
+    ${P} .rt-corner{position:absolute!important;z-index:30!important;display:inline-flex!important;align-items:center;gap:3px;opacity:1!important;visibility:visible!important;pointer-events:none!important;
+      background:rgba(0,0,0,.78)!important;color:#fff!important;padding:3px 8px!important;font-size:11px!important;font-weight:600!important;line-height:1.3!important;border-radius:4px!important;margin:0!important;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    ${P} .rt-tl{top:6px!important;left:6px!important;}
+    ${P} .rt-tr{top:6px!important;right:6px!important;left:auto!important;}
+    ${P} .rt-bl{bottom:6px!important;left:6px!important;}
+    ${P} .rt-br{bottom:6px!important;right:6px!important;left:auto!important;}
+    ${P} .select-btn.rt-corner{pointer-events:auto!important;cursor:pointer!important;background:rgba(0,128,0,.95)!important;border:none!important;z-index:45!important;}
+    ${P} .rt-play{position:absolute!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:46px!important;height:46px!important;border-radius:50%!important;
+      background:rgba(0,0,0,.7)!important;color:#fff!important;display:flex!important;align-items:center;justify-content:center;font-size:18px;cursor:pointer!important;pointer-events:auto!important;z-index:40!important;border:2px solid rgba(255,255,255,.85)!important;padding:0!important;}
+    ${P}.playing .rt-play,${P}.playing .rt-tr,${P}.playing .rt-bl,${P}.playing .rt-br{display:none!important;}
+    ${P} .preview-video{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;object-fit:cover!important;z-index:10!important;background:#000!important;}
+  `;
+  document.head.appendChild(st);
+})();
+
+// চলতে থাকা সব প্রিভিউ বন্ধ করে থাম্বনেইল ফিরিয়ে আনে (ব্রাউজার ওই ভিডিওর ডাউনলোডও থামিয়ে দেয়)
 function stopAllPreviews() {
   document.querySelectorAll("#pickerResults .result-tile").forEach((tile) => {
     const vid = tile.querySelector(".preview-video");
-    if (!vid) return;
-    vid.pause();
-    vid.removeAttribute("src");
-    vid.load();
-    vid.remove();
-    const th = tile.querySelector(".thumb-img");
-    if (th) th.style.display = "block";
-    const po = tile.querySelector(".play-btn-overlay");
-    if (po) po.style.display = "flex";
+    if (typeof tile._stopPreview === "function") return tile._stopPreview();
+    if (vid) {
+      vid.pause();
+      vid.removeAttribute("src");
+      vid.load();
+      vid.remove();
+    }
   });
 }
 
@@ -1139,74 +1161,97 @@ async function runPickerSearch() {
       const mismatch = orient !== "unknown" && orient !== wanted;
       const isVideo = r.type === "video";
       const durationText = isVideo && r.duration ? fmtClip(r.duration) : "";
+      const orientText = (mismatch ? "⚠ " : "") + (orientLabel[orient] || "");
 
       const tile = document.createElement("div");
       tile.className = "result-tile" + (mismatch ? " mismatch" : "");
       tile.style.position = "relative";
 
-      // ডিউরেশন এখন ফুটারে (ফ্রেমের বাইরে) — তাই ক্রপ/overflow/ভিডিও কন্ট্রোলের নিচে আর হারাবে না
+      // শুরুতে শুধু থাম্বনেইল (<img>) — কোনো <video> তৈরি হয় না, তাই কিছুই লোড হয় না।
+      // চার কোনা: উপরে বামে Select, ডানে Landscape/Portrait · নিচে বামে Pexels/Pixabay, ডানে Duration
       tile.innerHTML = `
-        <div class="media-container" style="position:relative; width:100%; height:140px; overflow:hidden; border-radius:4px; background:#000;">
-          <img src="${escapeAttr(r.thumb || "")}" alt="" class="thumb-img" style="width:100%; height:100%; object-fit:cover; display:block;" />
-
-          <button type="button" class="select-btn" title="Select" style="position:absolute; top:6px; left:6px; background:rgba(0,128,0,0.95); color:#fff; border:none; padding:4px 9px; font-size:11px; border-radius:4px; cursor:pointer; z-index:30; box-shadow:0 2px 4px rgba(0,0,0,0.3);">✓ Select</button>
-
-          ${isVideo ? `<div class="play-btn-overlay" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.65); color:#fff; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:25;" title="Preview video">▶</div>` : ""}
-        </div>
-        <div class="tile-footer" style="padding:6px; display:flex; justify-content:space-between; align-items:center; gap:6px;">
-          <span class="src">${escapeHtml(String(r.source || ""))}</span>
-          ${durationText ? `<span class="duration-badge" style="display:inline-flex !important; align-items:center; gap:3px; background:rgba(0,0,0,0.85); color:#fff; padding:2px 7px; font-size:11px; font-weight:bold; border-radius:3px; position:static !important; opacity:1 !important; visibility:visible !important;">⏱ ${durationText}</span>` : ""}
-          <span class="orient-badge">${mismatch ? "⚠ " : ""}${orientLabel[orient] || ""}</span>
+        <div class="media-container">
+          <img src="${escapeAttr(r.thumb || "")}" alt="" class="thumb-img" loading="lazy" />
+          <button type="button" class="select-btn rt-corner rt-tl" title="Select">✓ Select</button>
+          ${orientText ? `<span class="rt-corner rt-tr">${escapeHtml(orientText)}</span>` : ""}
+          <span class="rt-corner rt-bl">${escapeHtml(String(r.source || ""))}</span>
+          ${durationText ? `<span class="rt-corner rt-br duration-badge">⏱ ${durationText}</span>` : ""}
+          ${isVideo ? `<div class="rt-play play-btn-overlay" role="button" tabindex="0" title="Preview video">▶</div>` : ""}
         </div>
       `;
 
       const mediaContainer = tile.querySelector(".media-container");
       const img = mediaContainer.querySelector(".thumb-img");
-      const playBtn = mediaContainer.querySelector(".play-btn-overlay");
+      const playBtn = mediaContainer.querySelector(".rt-play");
       const selectBtn = tile.querySelector(".select-btn");
+      let videoEl = null;
 
-      // শুধু প্লে বাটনে (▶) ক্লিক করলে ওই ভিডিও প্রিভিউ চলবে
-      if (isVideo && playBtn) {
-        playBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          stopAllPreviews();
+      const stopPreview = () => {
+        if (!videoEl) return;
+        videoEl.pause();
+        videoEl.removeAttribute("src"); // ডাউনলোড বন্ধ
+        videoEl.load();
+        videoEl.remove();
+        videoEl = null;
+        tile.classList.remove("playing");
+        img.style.display = "block";
+      };
+      tile._stopPreview = stopPreview;
 
-          img.style.display = "none";
-          playBtn.style.display = "none";
+      // শুধু এই ভিডিওটা লোড হবে ও চলবে (অন্যগুলো আগে বন্ধ হয়ে যায়)
+      const startPreview = () => {
+        if (videoEl) return;
+        stopAllPreviews();
 
-          const src = previewSrc(r);
-          const videoEl = document.createElement("video");
-          videoEl.className = "preview-video";
-          videoEl.controls = true;
-          videoEl.muted = true; // ব্রাউজারের autoplay নীতির জন্য জরুরি
-          videoEl.playsInline = true;
-          videoEl.preload = "auto";
-          videoEl.setAttribute("playsinline", "");
-          videoEl.style.cssText = "position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:10; background:#000;";
+        const src = previewSrc(r);
+        videoEl = document.createElement("video");
+        videoEl.className = "preview-video";
+        videoEl.controls = true;
+        videoEl.muted = true; // autoplay নীতির জন্য জরুরি; কন্ট্রোল থেকে সাউন্ড চালু করা যাবে
+        videoEl.playsInline = true;
+        videoEl.setAttribute("playsinline", "");
+        videoEl.preload = "auto";
 
-          const restore = () => {
-            videoEl.pause();
-            videoEl.remove();
-            img.style.display = "block";
-            playBtn.style.display = "flex";
-          };
+        videoEl.addEventListener("ended", stopPreview);
+        videoEl.addEventListener("error", () => {
+          console.error("Preview load failed:", src, videoEl && videoEl.error);
+          stopPreview();
+          toast(t("errPrefix", { msg: "preview" }), "err");
+        });
 
-          videoEl.addEventListener("ended", restore);
-          videoEl.addEventListener("error", () => {
-            console.error("Preview load failed:", src, videoEl.error);
-            restore();
-            toast(t("errPrefix", { msg: "preview" }), "err");
+        tile.classList.add("playing"); // প্লে বাটন ও নিচের ব্যাজ লুকায় (Select থাকে)
+        img.style.display = "none";
+        videoEl.src = src;
+        mediaContainer.insertBefore(videoEl, mediaContainer.firstChild);
+        const p = videoEl.play();
+        if (p && p.catch) {
+          p.catch((err) => {
+            if (err && err.name === "AbortError") return;
+            console.error("Preview play blocked:", err);
+            stopPreview();
           });
+        }
+      };
 
-          videoEl.src = src;
-          mediaContainer.appendChild(videoEl);
-          const p = videoEl.play();
-          if (p && p.catch) {
-            p.catch((err) => {
-              if (err && err.name === "AbortError") return; // দ্রুত অন্য ভিডিও চালালে স্বাভাবিক
-              console.error("Preview play blocked:", err);
-              restore();
-            });
+      if (isVideo && playBtn) {
+        // CSS/অন্য এলিমেন্ট ক্লিক আটকালেও যেন কাজ করে — কোঅর্ডিনেট দিয়ে প্লে বাটনের এলাকা মেলানো হয়
+        mediaContainer.addEventListener(
+          "click",
+          (e) => {
+            if (e.target.closest(".select-btn") || videoEl) return;
+            const b = playBtn.getBoundingClientRect();
+            const hit = e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= b.bottom;
+            if (hit) {
+              e.stopPropagation();
+              startPreview();
+            }
+          },
+          true
+        );
+        playBtn.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            startPreview();
           }
         });
       }
