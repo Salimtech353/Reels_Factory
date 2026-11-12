@@ -1098,30 +1098,6 @@ function previewSrc(r) {
   return r.previewUrl || r.previewVideo || r.videoPreview || r.videoUrl || r.preview || r.downloadUrl;
 }
 
-// পিকার টাইলের স্টাইল — style.css-এর কোনো নিয়ম যেন ব্যাজ/প্লে বাটন লুকাতে বা ক্লিক আটকাতে না পারে
-(function injectPickerStyle() {
-  if (document.getElementById("pickerTileStyle")) return;
-  const st = document.createElement("style");
-  st.id = "pickerTileStyle";
-  const P = "#pickerResults .result-tile";
-  st.textContent = `
-    ${P} .media-container{position:relative!important;width:100%!important;height:140px!important;overflow:hidden!important;border-radius:6px!important;background:#000!important;}
-    ${P} .media-container .thumb-img{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;object-fit:cover!important;display:block;pointer-events:none!important;}
-    ${P} .rt-corner{position:absolute!important;z-index:30!important;display:inline-flex!important;align-items:center;gap:3px;opacity:1!important;visibility:visible!important;pointer-events:none!important;
-      background:rgba(0,0,0,.78)!important;color:#fff!important;padding:3px 8px!important;font-size:11px!important;font-weight:600!important;line-height:1.3!important;border-radius:4px!important;margin:0!important;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-    ${P} .rt-tl{top:6px!important;left:6px!important;}
-    ${P} .rt-tr{top:6px!important;right:6px!important;left:auto!important;}
-    ${P} .rt-bl{bottom:6px!important;left:6px!important;}
-    ${P} .rt-br{bottom:6px!important;right:6px!important;left:auto!important;}
-    ${P} .select-btn.rt-corner{pointer-events:auto!important;cursor:pointer!important;background:rgba(0,128,0,.95)!important;border:none!important;z-index:45!important;}
-    ${P} .rt-play{position:absolute!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:46px!important;height:46px!important;border-radius:50%!important;
-      background:rgba(0,0,0,.7)!important;color:#fff!important;display:flex!important;align-items:center;justify-content:center;font-size:18px;cursor:pointer!important;pointer-events:auto!important;z-index:40!important;border:2px solid rgba(255,255,255,.85)!important;padding:0!important;}
-    ${P}.playing .rt-play,${P}.playing .rt-tr,${P}.playing .rt-bl,${P}.playing .rt-br{display:none!important;}
-    ${P} .preview-video{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;object-fit:cover!important;z-index:10!important;background:#000!important;}
-  `;
-  document.head.appendChild(st);
-})();
-
 // চলতে থাকা সব প্রিভিউ বন্ধ করে থাম্বনেইল ফিরিয়ে আনে (ব্রাউজার ওই ভিডিওর ডাউনলোডও থামিয়ে দেয়)
 function stopAllPreviews() {
   document.querySelectorAll("#pickerResults .result-tile").forEach((tile) => {
@@ -1219,7 +1195,7 @@ async function runPickerSearch() {
           toast(t("errPrefix", { msg: "preview" }), "err");
         });
 
-        tile.classList.add("playing"); // প্লে বাটন ও নিচের ব্যাজ লুকায় (Select থাকে)
+        tile.classList.add("playing"); // প্লে বাটন লুকায়; ভিডিও ছোট হয়ে নিচের স্ট্রিপে Source/Duration দেখায়
         img.style.display = "none";
         videoEl.src = src;
         mediaContainer.insertBefore(videoEl, mediaContainer.firstChild);
